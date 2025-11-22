@@ -2,6 +2,7 @@ import asyncio
 import logging
 import signal
 import sys
+from aiohttp import web
 from config import Config
 from node_manager import NodeManager
 from cache_manager import CacheManager
@@ -46,25 +47,33 @@ class MemeTokenDetector:
         return True
     
     async def start(self):
-        """启动系统"""
-        if not await self.initialize():
-            self.logger.error("系统初始化失败")
-            return
+    """启动系统"""
+    if not await self.initialize():
+        self.logger.error("系统初始化失败")
+        return
+    
+    self.is_running = True
+    self.logger.info("启动Meme币检测系统...")
+    
+    # 注册信号处理
+    signal.signal(signal.SIGINT, self.signal_handler)
+    signal.signal(signal.SIGTERM, self.signal_handler)
+    
+    try:
+        # 启动HTTP服务器（绑定端口）
+        await self.start_http_server()
         
-        self.is_running = True
-        self.logger.info("启动Meme币检测系统...")
+        # 启动事件监听（在后台运行）
+        asyncio.create_task(self.event_listener.start_listening())
         
-        # 注册信号处理
-        signal.signal(signal.SIGINT, self.signal_handler)
-        signal.signal(signal.SIGTERM, self.signal_handler)
-        
-        try:
-            # 启动事件监听
-            await self.event_listener.start_listening()
-        except Exception as e:
-            self.logger.error(f"系统运行异常: {e}")
-        finally:
-            await self.shutdown()
+        # 保持程序运行
+        while self.is_running:
+            await asyncio.sleep(1)
+            
+    except Exception as e:
+        self.logger.error(f"系统运行异常: {e}")
+    finally:
+        await self.shutdown()
     
     async def shutdown(self):
         """关闭系统"""

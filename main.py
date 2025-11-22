@@ -45,35 +45,60 @@ class MemeTokenDetector:
         
         self.logger.info("系统初始化完成")
         return True
+
+    async def start_http_server(self):
+        """启动HTTP服务器绑定端口"""
+        app = web.Application()
+        
+        # 添加健康检查接口
+        app.router.add_get('/', self.health_check)
+        app.router.add_get('/health', self.health_check)
+        
+        runner = web.AppRunner(app)
+        await runner.setup()
+        
+        # 绑定到所有接口的8080端口
+        site = web.TCPSite(runner, '0.0.0.0', 8080)
+        await site.start()
+        
+        self.logger.info("HTTP服务器已启动在端口8080")
+    
+    async def health_check(self, request):
+        """健康检查接口"""
+        return web.json_response({
+            "status": "running", 
+            "service": "bsc-meme-detector",
+            "timestamp": asyncio.get_event_loop().time()
+        })
     
     async def start(self):
-    """启动系统"""
-    if not await self.initialize():
-        self.logger.error("系统初始化失败")
-        return
-    
-    self.is_running = True
-    self.logger.info("启动Meme币检测系统...")
-    
-    # 注册信号处理
-    signal.signal(signal.SIGINT, self.signal_handler)
-    signal.signal(signal.SIGTERM, self.signal_handler)
-    
-    try:
-        # 启动HTTP服务器（绑定端口）
-        await self.start_http_server()
+        """启动系统"""
+        if not await self.initialize():
+            self.logger.error("系统初始化失败")
+            return
         
-        # 启动事件监听（在后台运行）
-        asyncio.create_task(self.event_listener.start_listening())
+        self.is_running = True
+        self.logger.info("启动Meme币检测系统...")
         
-        # 保持程序运行
-        while self.is_running:
-            await asyncio.sleep(1)
+        # 注册信号处理
+        signal.signal(signal.SIGINT, self.signal_handler)
+        signal.signal(signal.SIGTERM, self.signal_handler)
+        
+        try:
+            # 启动HTTP服务器（绑定端口）
+            await self.start_http_server()
             
-    except Exception as e:
-        self.logger.error(f"系统运行异常: {e}")
-    finally:
-        await self.shutdown()
+            # 启动事件监听（在后台运行）
+            asyncio.create_task(self.event_listener.start_listening())
+            
+            # 保持程序运行
+            while self.is_running:
+                await asyncio.sleep(1)
+                
+        except Exception as e:
+            self.logger.error(f"系统运行异常: {e}")
+        finally:
+            await self.shutdown()
     
     async def shutdown(self):
         """关闭系统"""

@@ -29,6 +29,7 @@ class Config:
     REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
     
     # 系统配置
+    LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
     NODE_TIMEOUT = 3
     DETECTION_TIMEOUT = 8
     CACHE_TTL_STATIC = 3600  # 1小时

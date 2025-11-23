@@ -13,6 +13,8 @@ class Config:
     BSC_WS_NODES = [
         os.getenv('BSC_WS_1'),
         os.getenv('BSC_WS_2'),
+        os.getenv('BSC_WS_3'),
+        os.getenv('BSC_WS_4'),
         os.getenv('QUICKNODE_WS'),
         os.getenv('MORALIS_WS')
     ]

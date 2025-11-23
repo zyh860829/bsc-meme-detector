@@ -1,6 +1,11 @@
 import aiohttp
 import json
 import logging
+import time
+import hmac
+import hashlib
+import base64
+import urllib.parse
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 class NotificationManager:
@@ -8,26 +13,51 @@ class NotificationManager:
         self.config = config
         self.logger = logging.getLogger(__name__)
     
+    def _sign_dingtalk_url(self, webhook_url, secret):
+        """对钉钉Webhook URL进行签名"""
+        if not secret:
+            return webhook_url
+            
+        timestamp = str(round(time.time() * 1000))
+        string_to_sign = f"{timestamp}\n{secret}"
+        hmac_code = hmac.new(
+            secret.encode('utf-8'), 
+            string_to_sign.encode('utf-8'), 
+            digestmod=hashlib.sha256
+        ).digest()
+        sign = urllib.parse.quote_plus(base64.b64encode(hmac_code))
+        
+        # 添加签名参数到URL
+        signed_url = f"{webhook_url}&timestamp={timestamp}&sign={sign}"
+        return signed_url
+    
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=3))
     async def send_dingtalk_notification(self, risk_report, detection_time):
-        """发送钉钉通知"""
+        """发送钉钉通知（支持Secret签名）"""
         if not self.config.DINGTALK_WEBHOOK:
             self.logger.warning("钉钉Webhook未配置，跳过通知")
             return
         
         try:
+            # 对URL进行签名（如果有Secret）
+            webhook_url = self._sign_dingtalk_url(
+                self.config.DINGTALK_WEBHOOK, 
+                self.config.DINGTALK_SECRET
+            )
+            
             message = self._build_dingtalk_message(risk_report, detection_time)
             
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    self.config.DINGTALK_WEBHOOK,
+                    webhook_url,
                     json=message,
                     headers={'Content-Type': 'application/json'}
                 ) as response:
                     if response.status == 200:
                         self.logger.info("钉钉通知发送成功")
                     else:
-                        self.logger.error(f"钉钉通知发送失败: {response.status}")
+                        response_text = await response.text()
+                        self.logger.error(f"钉钉通知发送失败: {response.status}, {response_text}")
                         raise Exception(f"HTTP {response.status}")
                         
         except Exception as e:
@@ -86,3 +116,40 @@ class NotificationManager:
         message['markdown']['text'] += f"*检测时间: {risk_report.get('detection_time', '')}*"
         
         return message
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=3))
+    async def send_test_notification(self):
+        """发送测试通知"""
+        if not self.config.DINGTALK_WEBHOOK:
+            self.logger.warning("钉钉Webhook未配置，跳过测试通知")
+            return False
+        
+        try:
+            # 创建测试报告
+            test_report = {
+                'token_address': '0x1234567890abcdef1234567890abcdef12345678',
+                'token_name': 'Test Token',
+                'token_symbol': 'TEST',
+                'detection_time': '2024-01-01 12:00:00',
+                'progress_bars': {
+                    'transaction_restrictions': '[==========] 无限制',
+                    'permission_backdoor': '[=====-----] 部分风险',
+                    'economic_model': '[==========] 模型合理',
+                    'security_vulnerabilities': '[----------] 高风险'
+                },
+                'badges': {
+                    'premine_detection': '✅ 无预挖矿',
+                    'presale_situation': '⚠️ 少量预售',
+                    'whitelist_mechanism': '❌ 无白名单',
+                    'lp_burn': '✅ 已销毁',
+                    'community_driven': '✅ 社区驱动'
+                }
+            }
+            
+            await self.send_dingtalk_notification(test_report, 5.5)
+            self.logger.info("测试通知发送成功")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"发送测试通知失败: {e}")
+            return False

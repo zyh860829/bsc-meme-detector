@@ -33,9 +33,19 @@ class MemeTokenDetector:
         """初始化系统"""
         self.logger.info("初始化Meme币检测系统...")
         
+        # 调试：打印所有环境变量状态
+        self.logger.info("=== 环境变量调试信息 ===")
+        self.logger.info(f"BSC_NODES[0]: '{self.config.BSC_NODES[0]}'")
+        self.logger.info(f"BSC_NODES[1]: '{self.config.BSC_NODES[1]}'")
+        self.logger.info(f"DINGTALK_WEBHOOK: '{self.config.DINGTALK_WEBHOOK}'")
+        self.logger.info(f"LOG_LEVEL: '{self.config.LOG_LEVEL}'")
+        self.logger.info("========================")
+        
         # 检查必要环境变量
         if not all([self.config.BSC_NODES[0], self.config.DINGTALK_WEBHOOK]):
             self.logger.error("缺少必要的环境变量配置")
+            self.logger.error(f"BSC_NODES[0] 为空: {self.config.BSC_NODES[0] is None}")
+            self.logger.error(f"DINGTALK_WEBHOOK 为空: {self.config.DINGTALK_WEBHOOK is None}")
             return False
         
         # 初始化管理器

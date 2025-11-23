@@ -84,28 +84,26 @@ class MemeTokenDetector:
             "timestamp": asyncio.get_event_loop().time()
         })
     
-    # 🆕🆕🆕 新增的测试方法 🆕🆕🆕
-async def test_dingtalk(self, request):
-    """测试钉钉通知"""
-    from notification_manager import NotificationManager
-    
-    self.logger.info("接收到钉钉测试请求")
-    
-    try:
-        notifier = NotificationManager(self.config)
-        success = await notifier.send_test_notification()
+    async def test_dingtalk(self, request):
+        """测试钉钉通知"""
+        from notification_manager import NotificationManager
         
-        if success:
-            self.logger.info("测试通知发送成功")
-            return web.Response(text="✅ 测试通知发送成功！请检查钉钉群")
-        else:
-            self.logger.error("测试通知发送失败")
-            return web.Response(text="❌ 测试通知发送失败，请检查配置")
+        self.logger.info("接收到钉钉测试请求")
+        
+        try:
+            notifier = NotificationManager(self.config)
+            success = await notifier.send_test_notification()
             
-    except Exception as e:
-        self.logger.error(f"测试过程中发生错误: {e}")
-        return web.Response(text=f"❌ 测试错误: {str(e)}")
-        # 🆕🆕🆕 新增结束 🆕🆕🆕
+            if success:
+                self.logger.info("测试通知发送成功")
+                return web.Response(text="✅ 测试通知发送成功！请检查钉钉群")
+            else:
+                self.logger.error("测试通知发送失败")
+                return web.Response(text="❌ 测试通知发送失败，请检查配置")
+                
+        except Exception as e:
+            self.logger.error(f"测试过程中发生错误: {e}")
+            return web.Response(text=f"❌ 测试错误: {str(e)}")
     
     async def start(self):
         """启动系统"""

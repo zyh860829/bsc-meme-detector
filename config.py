@@ -24,6 +24,7 @@ class Config:
     
     # 通知配置
     DINGTALK_WEBHOOK = os.getenv('DINGTALK_WEBHOOK')
+    DINGTALK_SECRET = os.getenv('DINGTALK_SECRET')
     
     # Redis配置
     REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')

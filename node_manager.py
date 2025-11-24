@@ -221,5 +221,7 @@ class NodeManager:
             self._reconnect_task.cancel()
         if self.redis_client:
             await self.redis_client.close()
+        # ✅ 只修改这一行：修正WebSocket关闭方法
         if self.websocket:
-            await self.websocket.provider.disconnect()
+            if hasattr(self.websocket.provider, 'websocket') and self.websocket.provider.websocket:
+                await self.websocket.provider.websocket.close()

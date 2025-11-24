@@ -29,6 +29,7 @@ class NodeManager:
 
         # 🆕 Infura 节点管理
         self.infura_ws_url = None
+        self.infura_http_url = None
         self._setup_infura_node()
 
         # 🆕 动态配置
@@ -37,22 +38,42 @@ class NodeManager:
 
     def _setup_infura_node(self):
         """设置 Infura 节点"""
-        infura_url = os.getenv('INFURA_BSC_WS_URL')
-        if infura_url:
-            self.infura_ws_url = infura_url
-            self.logger.info(f"✅ Infura 节点配置成功: {infura_url[:50]}...")
+        infura_ws_url = os.getenv('INFURA_BSC_WS_URL')
+        infura_http_url = os.getenv('INFURA_BSC_HTTP_URL')
+        
+        if infura_ws_url:
+            self.infura_ws_url = infura_ws_url
+            self.logger.info(f"✅ Infura WebSocket 节点配置成功: {infura_ws_url[:50]}...")
         else:
             self.logger.warning("⚠️ 未找到 INFURA_BSC_WS_URL 环境变量")
+            
+        if infura_http_url:
+            self.infura_http_url = infura_http_url
+            self.logger.info(f"✅ Infura HTTP 节点配置成功: {infura_http_url[:50]}...")
+        else:
+            self.logger.warning("⚠️ 未找到 INFURA_BSC_HTTP_URL 环境变量")
 
     def _init_nodes(self):
         """初始化节点连接，支持动态配置"""
-        # 优先使用动态配置（如果存在）
-        if self.dynamic_nodes_url:
-            # 🆕 这里可以添加从远程 URL 获取节点列表的逻辑
-            # 例如：通过 HTTP 请求获取最新节点列表
-            pass
+        # 优先使用 Infura HTTP 节点
+        if self.infura_http_url:
+            try:
+                w3 = Web3(HTTPProvider(self.infura_http_url, request_kwargs={'timeout': 10}))
+                w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+                if w3.is_connected():
+                    self.http_nodes.append({
+                        'url': self.infura_http_url,
+                        'w3': w3,
+                        'healthy': True,
+                        'infura': True
+                    })
+                    self.logger.info(f"✅ 成功连接 Infura HTTP 节点")
+                else:
+                    self.logger.warning(f"❌ 无法连接 Infura HTTP 节点")
+            except Exception as e:
+                self.logger.error(f"❌ 连接 Infura HTTP 节点失败: {e}")
 
-        # 初始化 HTTP 节点
+        # 初始化其他 HTTP 节点
         for node_url in self.config.BSC_NODES:
             if node_url:
                 try:
@@ -62,7 +83,8 @@ class NodeManager:
                         self.http_nodes.append({
                             'url': node_url,
                             'w3': w3,
-                            'healthy': True
+                            'healthy': True,
+                            'infura': False
                         })
                         self.logger.info(f"✅ 成功连接 HTTP 节点: {node_url}")
                     else:
@@ -70,16 +92,28 @@ class NodeManager:
                 except Exception as e:
                     self.logger.error(f"❌ 连接 HTTP 节点失败 {node_url}: {e}")
 
-        # 初始化 WebSocket 节点
+        # 初始化 WebSocket 节点 - 优先 Infura
+        ws_nodes = []
+        
+        # 优先添加 Infura WebSocket
+        if self.infura_ws_url:
+            ws_nodes.append({'url': self.infura_ws_url, 'healthy': True, 'infura': True})
+        
+        # 添加其他备用 WebSocket 节点
         preferred_ws_nodes = [
             "wss://bsc-ws-node.nariox.org",
             "wss://bsc.publicnode.com",
             "wss://ws-bsc.nodeinfra.com",
             "wss://bsc-rpc.publicnode.com"
         ]
-        self.ws_nodes = [{'url': url, 'healthy': True} for url in preferred_ws_nodes]
+        for url in preferred_ws_nodes:
+            ws_nodes.append({'url': url, 'healthy': True, 'infura': False})
+            
+        self.ws_nodes = ws_nodes
+        
         for node in self.ws_nodes:
-            self.logger.info(f"🌐 注册 WebSocket 节点: {node['url']}")
+            node_type = "Infura" if node['infura'] else "备用"
+            self.logger.info(f"🌐 注册 {node_type} WebSocket 节点: {node['url']}")
 
     @retry(
         stop=stop_after_attempt(3),
@@ -87,31 +121,51 @@ class NodeManager:
         retry=retry_if_exception_type((TimeoutError, ConnectionError))
     )
     async def make_http_request(self, method, *args, **kwargs):
-        """使用重试机制发送 HTTP 请求"""
+        """使用重试机制发送 HTTP 请求 - 优先使用 Infura 节点"""
+        # 首先尝试 Infura 节点
+        infura_nodes = [node for node in self.http_nodes if node.get('infura') and node['healthy']]
+        if infura_nodes:
+            try:
+                node = infura_nodes[0]
+                w3 = node['w3']
+                result = self._call_w3_method(w3, method, *args, **kwargs)
+                node['healthy'] = True
+                self.current_node_index = self.http_nodes.index(node)
+                return result
+            except Exception as e:
+                self.logger.warning(f"⚠️ Infura 节点请求失败: {e}")
+                infura_nodes[0]['healthy'] = False
+
+        # 回退到其他节点
         for i in range(len(self.http_nodes)):
             node_index = (self.current_node_index + i) % len(self.http_nodes)
             node = self.http_nodes[node_index]
-            if not node['healthy']:
+            if not node['healthy'] or node.get('infura'):
                 continue
             try:
                 w3 = node['w3']
-                if method == 'eth_call':
-                    result = w3.eth.call(*args, **kwargs)
-                elif method == 'get_transaction':
-                    result = w3.eth.get_transaction(*args, **kwargs)
-                elif method == 'get_code':
-                    result = w3.eth.get_code(*args, **kwargs)
-                elif method == 'get_block':
-                    result = w3.eth.get_block(*args, **kwargs)
-                else:
-                    raise ValueError(f"未知的 HTTP 方法: {method}")
+                result = self._call_w3_method(w3, method, *args, **kwargs)
                 node['healthy'] = True
                 self.current_node_index = node_index
                 return result
             except Exception as e:
                 self.logger.warning(f"⚠️ 节点 {node['url']} 请求失败: {e}")
                 node['healthy'] = False
+                
         raise ConnectionError("所有 HTTP 节点均不可用")
+    
+    def _call_w3_method(self, w3, method, *args, **kwargs):
+        """调用 Web3 方法"""
+        if method == 'eth_call':
+            return w3.eth.call(*args, **kwargs)
+        elif method == 'get_transaction':
+            return w3.eth.get_transaction(*args, **kwargs)
+        elif method == 'get_code':
+            return w3.eth.get_code(*args, **kwargs)
+        elif method == 'get_block':
+            return w3.eth.get_block(*args, **kwargs)
+        else:
+            raise ValueError(f"未知的 HTTP 方法: {method}")
 
     async def _test_websocket_connection(self, ws_url: str) -> bool:
         """异步测试 WebSocket 连接"""
@@ -128,31 +182,25 @@ class NodeManager:
             return False
 
     async def get_current_websocket_url(self) -> str:
-        """获取当前可用的 WebSocket 节点 URL（带自动重连）"""
-        # 优先使用缓存的健康节点
-        if self.redis_client:
-            cached = await self.redis_client.get(self.redis_key)
-            if cached:
-                healthy_nodes = json.loads(cached)
-                for ws_url in healthy_nodes:
-                    if await self._test_websocket_connection(ws_url):
-                        self.logger.info(f"🎯✅ 使用缓存的健康 WebSocket 节点: {ws_url}")
-                        return ws_url
+        """获取当前可用的 WebSocket 节点 URL - 优先使用 Infura"""
+        # 强制优先使用 Infura WebSocket 节点
+        if self.infura_ws_url:
+            self.logger.info(f"🎯 优先使用 Infura WebSocket 节点: {self.infura_ws_url[:50]}...")
+            if await self._test_websocket_connection(self.infura_ws_url):
+                self.logger.info("✅ Infura WebSocket 节点连接成功")
+                return self.infura_ws_url
+            else:
+                self.logger.warning("❌ Infura WebSocket 节点连接失败，尝试备用节点")
 
-        # 测试并选择可用节点
+        # 测试并选择其他可用节点
         for node in self.ws_nodes:
+            if node.get('infura'):  # 跳过 Infura，已经尝试过了
+                continue
+                
             ws_url = node['url']
             if node['healthy'] and await self._test_websocket_connection(ws_url):
-                # 缓存健康节点
-                if self.redis_client:
-                    healthy_urls = [n['url'] for n in self.ws_nodes if n['healthy']]
-                    await self.redis_client.set(self.redis_key, json.dumps(healthy_urls))
+                self.logger.info(f"✅ 使用备用 WebSocket 节点: {ws_url}")
                 return ws_url
-
-        # 最后尝试 Infura
-        if self.infura_ws_url:
-            if await self._test_websocket_connection(self.infura_ws_url):
-                return self.infura_ws_url
 
         raise ConnectionError("所有 WebSocket 节点均不可用")
 
@@ -221,7 +269,7 @@ class NodeManager:
             self._reconnect_task.cancel()
         if self.redis_client:
             await self.redis_client.close()
-        # ✅ 只修改这一行：修正WebSocket关闭方法
         if self.websocket:
+            # 正确的WebSocket关闭方式
             if hasattr(self.websocket.provider, 'websocket') and self.websocket.provider.websocket:
                 await self.websocket.provider.websocket.close()

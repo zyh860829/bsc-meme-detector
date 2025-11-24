@@ -46,7 +46,7 @@ class EventListener:
             
             while self.is_running:
                 try:
-                    # 👇 修复：对 ws.recv() 加 await，避免 coroutine 错误
+                    # 👇 只改了这一行：加了一个 await
                     message = await asyncio.wait_for(await ws.recv(), timeout=30)
                     data = json.loads(message)
                     

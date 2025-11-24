@@ -46,8 +46,8 @@ class EventListener:
             
             while self.is_running:
                 try:
-                    # 👇 只改了这一行：加了一个 await
-                    message = await asyncio.wait_for(await ws.recv(), timeout=30)
+                    # 👇 只修正这一行：移除多余的await
+                    message = await asyncio.wait_for(ws.recv(), timeout=30)
                     data = json.loads(message)
                     
                     if 'params' in data and data['params'].get('subscription'):

@@ -46,7 +46,7 @@ class EventListener:
             
             while self.is_running:
                 try:
-                    # 👇 只修正这一行：移除多余的await
+                    # ✅ 只修改这一行：移除多余的await
                     message = await asyncio.wait_for(ws.recv(), timeout=30)
                     data = json.loads(message)
                     

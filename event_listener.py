@@ -174,6 +174,10 @@ class EventListener:
     async def _scan_blocks_for_pairs(self, from_block, to_block):
         """扫描指定区块范围内的交易对（新增方法）"""
         try:
+            # 确保 from_block <= to_block
+            if from_block > to_block:
+                from_block, to_block = to_block, from_block
+            
             # 使用线程池执行同步的Web3操作
             loop = asyncio.get_event_loop()
             events = await loop.run_in_executor(

@@ -24,7 +24,7 @@ class EventListener:
         self.is_running = True
         while self.is_running:
             try:
-                ws_url = self.node_manager.get_current_websocket_url()
+                ws_url = await self.node_manager.get_current_websocket_url()
                 await self._listen_websocket(ws_url)
             except Exception as e:
                 self.logger.error(f"WebSocket监听失败: {e}")

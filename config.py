@@ -4,6 +4,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Config:
+    # 服务监听端口（Render 会自动设置 PORT 环境变量）
+    PORT = os.getenv("PORT", "8080")
+
     # BSC节点配置 - 硬编码的节点列表，按响应速度排序
     BSC_NODES = [
         'https://bsc-dataseed4.ninicoin.io/',   # 237ms 🥇
@@ -12,7 +15,7 @@ class Config:
         'https://bsc-dataseed1.defibit.io/',    # 1112ms
         'https://bsc-dataseed2.ninicoin.io/',   # 备用节点
         'https://bsc-dataseed.binance.org/',    # 备用节点
-        'https://bsc-dataseed1.binance.org/',   # 备用节点
+        'https://bsc-dataseed1.ninicoin.io/',   # 备用节点
         'https://bsc-dataseed3.binance.org/',   # 备用节点
         'https://bsc-dataseed2.defibit.io/',    # 备用节点
         'https://bsc-dataseed1.ninicoin.io/'    # 备用节点

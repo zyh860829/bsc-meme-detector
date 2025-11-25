@@ -119,7 +119,7 @@ class EventListener:
             return False
     
     async def _listen_websocket(self, ws_url):
-        """WebSocket监听 - 保证及时性"""
+        """WebSocket监听 - 进一步降低频率"""
         try:
             async with connect(ws_url) as ws:
                 self.logger.info(f"成功连接到WebSocket: {ws_url}")
@@ -147,21 +147,21 @@ class EventListener:
                         if 'params' in data and data['params'].get('subscription'):
                             self.consecutive_checks += 1
                             
-                            # ✅ 优化：保证8秒内检测的策略
-                            # 策略1：前5个块立即检查（保证启动时的及时性）
-                            if self.consecutive_checks <= 5:
+                            # ✅ 进一步降低频率
+                            # 策略1：前3个块立即检查（保证启动时的及时性）
+                            if self.consecutive_checks <= 3:
                                 self.logger.info("🚀 启动检查：收到新块通知")
                                 asyncio.create_task(self._check_recent_blocks_fast(1))
                             
-                            # 策略2：正常运行时，每2个块检查一次（BSC出块时间约3秒，平均延迟4.5秒）
-                            elif self.consecutive_checks % 2 == 0:
+                            # 策略2：正常运行时，每4个块检查一次（BSC出块时间约3秒，平均延迟6秒）
+                            elif self.consecutive_checks % 4 == 0:
                                 self.logger.info("🔍 实时检查：收到新块通知")
                                 asyncio.create_task(self._check_recent_blocks_fast(1))
                             
-                            # 策略3：每10个块做一次深度检查（补全可能遗漏的交易对）
-                            elif self.consecutive_checks % 10 == 0:
+                            # 策略3：每15个块做一次深度检查（补全可能遗漏的交易对）
+                            elif self.consecutive_checks % 15 == 0:
                                 self.logger.info("📊 深度检查：扫描最近区块")
-                                asyncio.create_task(self._check_recent_blocks_safe(3))
+                                asyncio.create_task(self._check_recent_blocks_safe(2))  # ✅ 修改：只扫描2个块
                             
                             else:
                                 self.logger.debug("⏭️ 智能跳过：频率控制")
@@ -205,19 +205,20 @@ class EventListener:
                 
             block_number = latest_block.number
             
-            # 快速扫描：只扫描最新1-2个块
-            from_block = max(block_number - block_range + 1, block_number - 2)  # 最多扫描2个块
-            self.logger.info(f"🚀 快速扫描: 区块 {from_block}-{block_number}")
+            # 快速扫描：只扫描最新1个块
+            from_block = block_number  # ✅ 修改：只扫描最新1个块
+            to_block = block_number
+            self.logger.info(f"🚀 快速扫描: 区块 {from_block}-{to_block}")
             
             # 使用专门的快速扫描方法
-            await self._scan_blocks_fast(from_block, block_number)
+            await self._scan_blocks_fast(from_block, to_block)
             
             await self._record_request()
                 
         except Exception as e:
             self.logger.error(f"快速检查失败: {e}")
     
-    async def _check_recent_blocks_safe(self, block_range=3):
+    async def _check_recent_blocks_safe(self, block_range=2):
         """✅ 新增：安全检查方法 - 补全可能遗漏的交易对"""
         # 前置检查
         if not await self._can_make_request():
@@ -264,7 +265,7 @@ class EventListener:
                 from_block, to_block = to_block, from_block
             
             # 快速扫描：严格限制范围
-            max_block_range = 2  # 快速扫描最多2个块
+            max_block_range = 1  # ✅ 修改：快速扫描最多1个块
             if to_block - from_block > max_block_range:
                 to_block = from_block + max_block_range
                 self.logger.warning(f"⚠️ 快速扫描范围过大，调整为: {from_block}-{to_block}")
@@ -315,11 +316,11 @@ class EventListener:
                 
                 # 快速检查遇到限制：短暂暂停
                 if self.api_limit_errors == 1:
-                    self.logger.warning("⚠️ 快速检查遇到API限制，暂停5秒")
-                    await asyncio.sleep(5)
-                else:
-                    self.logger.warning("⚠️ 快速检查频繁遇到限制，暂停10秒")
+                    self.logger.warning("⚠️ 快速检查遇到API限制，暂停10秒")  # ✅ 修改：延长到10秒
                     await asyncio.sleep(10)
+                else:
+                    self.logger.warning("⚠️ 快速检查频繁遇到限制，暂停20秒")  # ✅ 修改：延长到20秒
+                    await asyncio.sleep(20)
             
             self.logger.error(f"快速扫描失败 {from_block}-{to_block}: {e}")
             return 0
@@ -331,7 +332,7 @@ class EventListener:
                 from_block, to_block = to_block, from_block
             
             # 安全扫描：更严格的范围限制
-            max_block_range = 3  # 安全扫描最多3个块
+            max_block_range = 2  # ✅ 修改：安全扫描最多2个块
             if to_block - from_block > max_block_range:
                 to_block = from_block + max_block_range
                 self.logger.warning(f"⚠️ 安全扫描范围过大，调整为: {from_block}-{to_block}")
@@ -371,8 +372,8 @@ class EventListener:
                 self.api_limit_errors += 1
                 self.last_api_limit_time = time.time()
                 
-                self.logger.warning("⚠️ 安全扫描遇到API限制，暂停15秒")
-                await asyncio.sleep(15)
+                self.logger.warning("⚠️ 安全扫描遇到API限制，暂停30秒")  # ✅ 修改：延长到30秒
+                await asyncio.sleep(30)
             
             self.logger.error(f"安全扫描失败 {from_block}-{to_block}: {e}")
             return 0

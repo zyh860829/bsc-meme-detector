@@ -3,6 +3,7 @@ import logging
 import signal
 import sys
 import os
+import fcntl  # ✅ 新增：文件锁
 from aiohttp import web
 from config import Config
 from node_manager import NodeManager
@@ -17,7 +18,8 @@ class MemeTokenDetector:
         self.cache_manager = None
         self.event_listener = None
         self.is_running = False
-        self.http_runner = None  # 新增：存储HTTP runner
+        self.http_runner = None
+        self.lock_file = None  # ✅ 新增：锁文件
 
     def setup_logging(self):
         """配置日志"""
@@ -31,15 +33,41 @@ class MemeTokenDetector:
         )
         self.logger = logging.getLogger(__name__)
 
+    def acquire_instance_lock(self):
+        """✅ 新增：获取实例锁，确保单实例运行"""
+        try:
+            self.lock_file = open('/tmp/meme_detector.lock', 'w')
+            fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.logger.info("✅ 获取实例锁成功，单实例运行")
+            return True
+        except (IOError, BlockingIOError):
+            self.logger.error("❌ 另一个实例正在运行，退出当前实例")
+            return False
+
+    def release_instance_lock(self):
+        """✅ 新增：释放实例锁"""
+        if self.lock_file:
+            try:
+                fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_UN)
+                self.lock_file.close()
+                self.logger.info("✅ 释放实例锁")
+            except:
+                pass
+
     async def initialize(self):
         """初始化系统 - 增加环境变量检查"""
         self.logger.info("初始化Meme币检测系统...")
+
+        # ✅ 新增：检查单实例锁
+        if not self.acquire_instance_lock():
+            return False
 
         # ✅ 新增：检查必要环境变量
         required_vars = ['DINGTALK_WEBHOOK', 'REDIS_URL']
         missing_vars = [var for var in required_vars if not getattr(self.config, var, None)]
         if missing_vars:
             self.logger.error(f"❌ 缺少必要环境变量: {missing_vars}")
+            self.release_instance_lock()
             return False
 
         # 原有初始化逻辑
@@ -136,6 +164,9 @@ class MemeTokenDetector:
         # ✅ 新增：关闭HTTP服务器
         if self.http_runner:
             await self.http_runner.cleanup()
+
+        # ✅ 新增：释放实例锁
+        self.release_instance_lock()
 
         self.logger.info("✅ 系统已关闭")
 

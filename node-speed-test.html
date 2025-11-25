@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>节点测试器</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { font-family: Arial; padding: 15px; background: #f0f0f0; }
+        textarea { width: 95%; height: 150px; padding: 10px; font-size: 14px; }
+        button { background: blue; color: white; padding: 12px; font-size: 16px; border: none; border-radius: 5px; margin: 5px; }
+        .result { background: white; padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .good { border-left: 5px solid green; }
+        .bad { border-left: 5px solid red; }
+    </style>
+</head>
+<body>
+    <h2>🔍 节点测试器</h2>
+    
+    <p><strong>把10个节点地址粘贴在这里：</strong></p>
+    <textarea id="nodes">https://jsonplaceholder.typicode.com/posts/1
+https://api.publicapis.org/entries
+https://catfact.ninja/fact
+在这里粘贴你的10个节点地址
+每行一个</textarea>
+    
+    <button onclick="testAll()">🚀 开始测试</button>
+    <button onclick="clearResults()">🗑️ 清空结果</button>
+    
+    <div id="progress"></div>
+    <div id="results"></div>
+
+    <script>
+        async function testAll() {
+            const nodes = document.getElementById('nodes').value.split('\n');
+            const resultsDiv = document.getElementById('results');
+            const progressDiv = document.getElementById('progress');
+            
+            resultsDiv.innerHTML = '';
+            progressDiv.innerHTML = '🔄 开始测试...';
+            
+            let goodCount = 0;
+            let badCount = 0;
+            
+            for (let i = 0; i < nodes.length; i++) {
+                const url = nodes[i].trim();
+                if (!url) continue;
+                
+                progressDiv.innerHTML = `测试中... (${i + 1}/${nodes.length})`;
+                
+                const result = await testNode(url, i + 1);
+                if (result.success) goodCount++;
+                else badCount++;
+                
+                displayResult(result);
+            }
+            
+            progressDiv.innerHTML = `✅ 测试完成！成功: ${goodCount}个，失败: ${badCount}个`;
+        }
+        
+        async function testNode(url, number) {
+            try {
+                const start = Date.now();
+                const response = await fetch(url);
+                const time = Date.now() - start;
+                
+                return {
+                    number,
+                    url,
+                    success: true,
+                    time: time,
+                    status: response.status
+                };
+            } catch (error) {
+                return {
+                    number,
+                    url, 
+                    success: false,
+                    error: error.message
+                };
+            }
+        }
+        
+        function displayResult(result) {
+            const resultsDiv = document.getElementById('results');
+            const div = document.createElement('div');
+            div.className = `result ${result.success ? 'good' : 'bad'}`;
+            
+            if (result.success) {
+                div.innerHTML = `
+                    <strong>✅ 节点 ${result.number}</strong><br>
+                    ⏱️ ${result.time}毫秒<br>
+                    📍 ${result.url}
+                `;
+            } else {
+                div.innerHTML = `
+                    <strong>❌ 节点 ${result.number}</strong><br>
+                    🔧 ${result.error}<br>
+                    📍 ${result.url}
+                `;
+            }
+            
+            resultsDiv.appendChild(div);
+        }
+        
+        function clearResults() {
+            document.getElementById('results').innerHTML = '';
+            document.getElementById('progress').innerHTML = '';
+        }
+    </script>
+</body>
+</html>

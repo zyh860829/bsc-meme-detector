@@ -3,7 +3,7 @@ import logging
 import os
 from typing import Dict, List, Optional
 import json
-
+from urllib.parse import urlparse
 
 import redis.asyncio as redis
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -61,6 +61,25 @@ class NodeManager:
             self.logger.warning("⚠️ 未找到 INFURA_BSC_HTTP_URL 环境变量")
 
 
+    def _extract_node_name(self, url):
+        """✅ 新增：从URL中提取节点名称"""
+        try:
+            if 'infura' in url:
+                return 'Infura'
+            elif 'ninicoin' in url:
+                return 'NiniCoin'
+            elif 'binance.org' in url:
+                return 'Binance'
+            elif 'defibit' in url:
+                return 'DeFiBit'
+            else:
+                # 提取域名部分作为名称
+                parsed = urlparse(url)
+                return parsed.netloc.split('.')[-2] if '.' in parsed.netloc else parsed.netloc
+        except:
+            return 'Unknown'
+
+
     def _init_nodes(self):
         """初始化节点连接，支持动态配置"""
         # 优先使用 Infura HTTP 节点
@@ -69,11 +88,13 @@ class NodeManager:
                 w3 = Web3(HTTPProvider(self.infura_http_url, request_kwargs={'timeout': 10}))
                 w3.middleware_onion.inject(geth_poa_middleware, layer=0)
                 if w3.is_connected():
+                    # ✅ 修改：为节点添加名称标识
                     self.http_nodes.append({
                         'url': self.infura_http_url,
                         'w3': w3,
                         'healthy': True,
-                        'infura': True
+                        'infura': True,
+                        'name': 'Infura'  # ✅ 新增：节点名称
                     })
                     self.logger.info(f"✅ 成功连接 Infura HTTP 节点")
                 else:
@@ -89,11 +110,14 @@ class NodeManager:
                     w3 = Web3(HTTPProvider(node_url, request_kwargs={'timeout': 10}))
                     w3.middleware_onion.inject(geth_poa_middleware, layer=0)
                     if w3.is_connected():
+                        # ✅ 修改：为节点添加名称标识
+                        node_name = self._extract_node_name(node_url)
                         self.http_nodes.append({
                             'url': node_url,
                             'w3': w3,
                             'healthy': True,
-                            'infura': False
+                            'infura': False,
+                            'name': node_name  # ✅ 新增：节点名称
                         })
                         self.logger.info(f"✅ 成功连接 HTTP 节点: {node_url}")
                     else:
@@ -107,7 +131,12 @@ class NodeManager:
         
         # 优先添加 Infura WebSocket
         if self.infura_ws_url:
-            ws_nodes.append({'url': self.infura_ws_url, 'healthy': True, 'infura': True})
+            ws_nodes.append({
+                'url': self.infura_ws_url, 
+                'healthy': True, 
+                'infura': True,
+                'name': 'Infura'  # ✅ 新增：节点名称
+            })
         
         # 添加其他备用 WebSocket 节点
         preferred_ws_nodes = [
@@ -117,7 +146,13 @@ class NodeManager:
             "wss://bsc-rpc.publicnode.com"
         ]
         for url in preferred_ws_nodes:
-            ws_nodes.append({'url': url, 'healthy': True, 'infura': False})
+            node_name = self._extract_node_name(url)
+            ws_nodes.append({
+                'url': url, 
+                'healthy': True, 
+                'infura': False,
+                'name': node_name  # ✅ 新增：节点名称
+            })
             
         self.ws_nodes = ws_nodes
         

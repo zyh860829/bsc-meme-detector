@@ -38,6 +38,9 @@ class Config:
         'https://bsc.llamarpc.com',
         'https://rpc.ankr.com/bsc/d8a1748b83b84d03a09c2b4406cda0e1',
         'https://bsc-dataseed2.defibit.io/',    # 备用节点
+        'https://rpc.ankr.com/bsc',
+        'https://nodes.blxr.ltd/v1/bsc-mainnet',
+        'https://bsc.rpc.blxr.io'
     ]
     
     BSC_WS_NODES = [

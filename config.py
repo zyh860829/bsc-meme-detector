@@ -12,6 +12,9 @@ class Config:
 
     # BSC节点配置 - 硬编码的节点列表，按响应速度排序
     BSC_NODES = [
+        os.getenv('QUICKNODE_HTTP_URL'),  # 新增：QuickNode HTTP节点
+        os.getenv('MORALIS_HTTP_URL'),    # 修正：Moralis HTTP节点（只有一个）
+        os.getenv('INFURA_BSC_HTTP_URL'), # 新增：Infura HTTP节点
         'https://bsc-dataseed4.ninicoin.io/',   # 237ms 🥇
         'https://bsc-dataseed3.ninicoin.io/',   # 238ms 🥈
         'https://bsc-dataseed2.binance.org/',   # 1048ms
@@ -44,12 +47,9 @@ class Config:
     ]
     
     BSC_WS_NODES = [
-        os.getenv('BSC_WS_1'),
-        os.getenv('BSC_WS_2'),
-        os.getenv('BSC_WS_3'),
-        os.getenv('BSC_WS_4'),
-        os.getenv('QUICKNODE_WS'),
-        os.getenv('MORALIS_WS')
+        os.getenv('QUICKNODE_WS_URL'),      # 重命名：QuickNode WebSocket节点
+        os.getenv('MORALIS_WS_URL'),        # 修正：Moralis WebSocket节点（只有一个）
+        os.getenv('INFURA_BSC_WS_URL')      # 新增：Infura WebSocket节点
     ]
     
     # API密钥
@@ -116,6 +116,7 @@ class Config:
             return [
                 "wss://bsc-ws-node.nariox.org",
                 "wss://bsc.publicnode.com", 
+                "wss://bsc-rpc.publicnode.com",  # 新增的节点
                 "wss://ws-bsc.nodeinfra.com"
             ]
         return env_nodes

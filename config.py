@@ -20,6 +20,12 @@ class Config:
         'https://bsc-dataseed.binance.org/',    # 备用节点
         'https://bsc-dataseed1.ninicoin.io/',   # 备用节点
         'https://bsc-dataseed3.binance.org/',   # 备用节点
+        'https://bsc-dataseed3.defibit.io/',
+        'https://bsc-dataseed4.defibit.io/',
+        'https://bsc-mainnet.public.blastapi.io',
+        'https://bsc.rpc.blxrbdn.com/',
+        'https://binance.llamarpc.com',
+        'https://bsc.meowrpc.com',
         'https://bsc-dataseed2.defibit.io/',    # 备用节点
         'https://bsc-dataseed1.ninicoin.io/'    # 备用节点
     ]

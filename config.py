@@ -35,8 +35,6 @@ class Config:
         'https://bsc.merkle.io/',
         'https://bsc.therpc.io',
         'https://public-bsc-mainnet.fastnode.io/',
-        'https://bnb.rpc.subquery.network/public',
-        'https://api.bscscan.com/api',
         'https://bsc.llamarpc.com',
         'https://rpc.ankr.com/bsc/d8a1748b83b84d03a09c2b4406cda0e1',
         'https://bsc-dataseed2.defibit.io/',    # 备用节点

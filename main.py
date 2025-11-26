@@ -63,27 +63,56 @@ class MemeTokenDetector:
                 pass
 
     def acquire_distributed_lock(self):
-        """✅ 新增：使用Redis分布式锁"""
+        """✅ 新增：增强版分布式锁获取"""
         try:
-            # 初始化Redis客户端
             self.redis_client = redis.from_url(self.config.REDIS_URL)
             
-            # 尝试获取锁，有效期60秒
+            # 先尝试正常获取锁
             acquired = self.redis_client.set(
                 self.lock_key, 
                 self.instance_id, 
-                ex=60, 
-                nx=True  # 只在键不存在时设置
+                ex=60,
+                nx=True
             )
+            
             if acquired:
                 self.logger.info("✅ 获取分布式锁成功")
-                # 启动后台任务续期锁
                 self.lock_renewal_task = asyncio.create_task(self._renew_lock())
                 return True
-            else:
-                current_holder = self.redis_client.get(self.lock_key)
-                self.logger.warning(f"❌ 分布式锁已被占用: {current_holder}")
-                return False
+            
+            # 如果获取失败，检查现有锁的状态
+            current_lock = self.redis_client.get(self.lock_key)
+            if not current_lock:
+                # 锁突然消失了，重试一次
+                acquired = self.redis_client.set(
+                    self.lock_key, 
+                    self.instance_id, 
+                    ex=60,
+                    nx=True
+                )
+                if acquired:
+                    self.logger.info("✅ 重试获取分布式锁成功")
+                    self.lock_renewal_task = asyncio.create_task(self._renew_lock())
+                    return True
+            
+            # 检查锁的TTL
+            ttl = self.redis_client.ttl(self.lock_key)
+            self.logger.warning(f"锁被占用，TTL: {ttl}秒")
+            
+            # 如果TTL很短，等待一下
+            if 0 < ttl < 10:
+                self.logger.info(f"等待{ttl}秒后锁将自动释放")
+                time.sleep(ttl + 1)
+                return self.acquire_distributed_lock()
+            
+            # 如果TTL为-1（没有设置过期时间），强制处理
+            if ttl == -1:
+                self.logger.warning("检测到无过期时间的锁，强制清理")
+                self.redis_client.delete(self.lock_key)
+                return self.acquire_distributed_lock()
+                
+            return False
+            
         except Exception as e:
             self.logger.error(f"获取分布式锁失败: {e}")
             return False

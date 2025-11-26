@@ -25,7 +25,21 @@ class Config:
         'https://bsc-mainnet.public.blastapi.io',
         'https://bsc.rpc.blxrbdn.com/',
         'https://binance.llamarpc.com',
-        'https://bsc.meowrpc.com',
+        'https://bsc.meowrpc.com',        
+        'https://1rpc.io/bnb',
+        'https://binance-smart-chain-public.nodies.app',
+        'https://bsc-pokt.nodies.app',
+        'https://endpoints.omniatech.io/v1/bsc/mainnet/public',
+        'https://bsc.publicnode.com',
+        'https://bsc.rpc.grove.city/v1/01fdb492',
+        'https://bsc.merkle.io/',
+        'https://bsc.therpc.io',
+        'https://bsc-testnet.therpc.io',
+        'https://public-bsc-mainnet.fastnode.io/',
+        'https://bnb.rpc.subquery.network/public',
+        'https://api.bscscan.com/api',
+        'https://bsc.llamarpc.com',
+        'https://rpc.ankr.com/bsc/d8a1748b83b84d03a09c2b4406cda0e1'
         'https://bsc-dataseed2.defibit.io/',    # 备用节点
         'https://bsc-dataseed1.ninicoin.io/'    # 备用节点
     ]

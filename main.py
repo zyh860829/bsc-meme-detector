@@ -4,6 +4,8 @@ import signal
 import sys
 import os
 import fcntl  # ✅ 新增：文件锁
+import redis  # ✅ 新增：Redis客户端
+import time   # ✅ 新增：时间模块
 from aiohttp import web
 from config import Config
 from node_manager import NodeManager
@@ -20,6 +22,12 @@ class MemeTokenDetector:
         self.is_running = False
         self.http_runner = None
         self.lock_file = None  # ✅ 新增：锁文件
+        
+        # ✅ 新增：Redis分布式锁相关
+        self.redis_client = None
+        self.lock_key = "meme_detector_instance_lock"
+        self.instance_id = f"instance_{int(time.time())}_{os.getpid()}"
+        self.lock_renewal_task = None
 
     def setup_logging(self):
         """配置日志"""
@@ -54,6 +62,54 @@ class MemeTokenDetector:
             except:
                 pass
 
+    def acquire_distributed_lock(self):
+        """✅ 新增：使用Redis分布式锁"""
+        try:
+            # 初始化Redis客户端
+            self.redis_client = redis.from_url(self.config.REDIS_URL)
+            
+            # 尝试获取锁，有效期60秒
+            acquired = self.redis_client.set(
+                self.lock_key, 
+                self.instance_id, 
+                ex=60, 
+                nx=True  # 只在键不存在时设置
+            )
+            if acquired:
+                self.logger.info("✅ 获取分布式锁成功")
+                # 启动后台任务续期锁
+                self.lock_renewal_task = asyncio.create_task(self._renew_lock())
+                return True
+            else:
+                current_holder = self.redis_client.get(self.lock_key)
+                self.logger.warning(f"❌ 分布式锁已被占用: {current_holder}")
+                return False
+        except Exception as e:
+            self.logger.error(f"获取分布式锁失败: {e}")
+            return False
+
+    async def _renew_lock(self):
+        """✅ 新增：定期续期锁"""
+        while self.is_running:
+            try:
+                self.redis_client.expire(self.lock_key, 60)
+                await asyncio.sleep(30)  # 每30秒续期一次
+            except Exception as e:
+                self.logger.error(f"锁续期失败: {e}")
+                break
+
+    def release_distributed_lock(self):
+        """✅ 新增：释放分布式锁"""
+        try:
+            if self.redis_client:
+                # 只释放自己持有的锁
+                current_holder = self.redis_client.get(self.lock_key)
+                if current_holder and current_holder.decode() == self.instance_id:
+                    self.redis_client.delete(self.lock_key)
+                    self.logger.info("✅ 释放分布式锁成功")
+        except Exception as e:
+            self.logger.error(f"释放分布式锁失败: {e}")
+
     async def initialize(self):
         """初始化系统 - 增加环境变量检查"""
         self.logger.info("初始化Meme币检测系统...")
@@ -62,12 +118,18 @@ class MemeTokenDetector:
         if not self.acquire_instance_lock():
             return False
 
+        # ✅ 新增：检查分布式锁
+        if not self.acquire_distributed_lock():
+            self.release_instance_lock()
+            return False
+
         # ✅ 新增：检查必要环境变量
         required_vars = ['DINGTALK_WEBHOOK', 'REDIS_URL']
         missing_vars = [var for var in required_vars if not getattr(self.config, var, None)]
         if missing_vars:
             self.logger.error(f"❌ 缺少必要环境变量: {missing_vars}")
             self.release_instance_lock()
+            self.release_distributed_lock()
             return False
 
         # 原有初始化逻辑
@@ -153,6 +215,10 @@ class MemeTokenDetector:
         self.is_running = False
         self.logger.info("正在关闭系统...")
 
+        # 取消锁续期任务
+        if self.lock_renewal_task:
+            self.lock_renewal_task.cancel()
+
         # 关闭事件监听器
         if self.event_listener:
             self.event_listener.is_running = False
@@ -167,6 +233,9 @@ class MemeTokenDetector:
 
         # ✅ 新增：释放实例锁
         self.release_instance_lock()
+        
+        # ✅ 新增：释放分布式锁
+        self.release_distributed_lock()
 
         self.logger.info("✅ 系统已关闭")
 

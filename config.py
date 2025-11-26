@@ -13,7 +13,8 @@ class Config:
     # BSC节点配置 - 硬编码的节点列表，按响应速度排序
     BSC_NODES = [
         os.getenv('QUICKNODE_HTTP_URL'),  # 新增：QuickNode HTTP节点
-        os.getenv('MORALIS_HTTP_URL'),    # 修正：Moralis HTTP节点（只有一个）
+        os.getenv('MORALIS_HTTP_URL_1'),  # 修正：Moralis HTTP节点1
+        os.getenv('MORALIS_HTTP_URL_2'),  # 修正：Moralis HTTP节点2（补回丢失的节点）
         os.getenv('INFURA_BSC_HTTP_URL'), # 新增：Infura HTTP节点
         'https://bsc-dataseed4.ninicoin.io/',   # 237ms 🥇
         'https://bsc-dataseed3.ninicoin.io/',   # 238ms 🥈
@@ -48,8 +49,8 @@ class Config:
     
     BSC_WS_NODES = [
         os.getenv('QUICKNODE_WS_URL'),      # 重命名：QuickNode WebSocket节点
-        os.getenv('MORALIS_WS_URL'),        # 修正：Moralis WebSocket节点（只有一个）
         os.getenv('INFURA_BSC_WS_URL')      # 新增：Infura WebSocket节点
+        # 注意：Moralis 没有 WS 节点，所以这里只有两个
     ]
     
     # API密钥

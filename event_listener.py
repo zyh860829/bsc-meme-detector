@@ -25,6 +25,11 @@ class EventListener:
         self.last_api_limit_time = 0
         self.consecutive_checks = 0
         
+        # ✅ 新增：区块去重机制
+        self.processed_blocks = set()  # 已处理的区块号集合
+        self.last_block_number = 0     # 最后处理的区块号
+        self.max_processed_blocks = 1000  # 最大保存的区块数量
+        
     async def start_listening(self):
         """开始监听事件 - 大幅降低频率"""
         self.is_running = True
@@ -75,8 +80,24 @@ class EventListener:
                         data = json.loads(message)
                         
                         if 'params' in data and data['params'].get('subscription'):
-                            self.consecutive_checks += 1
+                            # ✅ 新增：提取区块号并进行去重检查
+                            block_data = data['params']['result']
+                            block_number_hex = block_data.get('number')
+                            if not block_number_hex:
+                                continue
+                                
+                            block_number = int(block_number_hex, 16)
                             
+                            # ✅ 新增：区块去重检查
+                            if block_number <= self.last_block_number:
+                                self.logger.debug(f"⏭️ 跳过旧区块: {block_number} (最后处理: {self.last_block_number})")
+                                continue
+                                
+                            if block_number in self.processed_blocks:
+                                self.logger.debug(f"⏭️ 区块 {block_number} 已处理过，跳过")
+                                continue
+                            
+                            self.consecutive_checks += 1
                             current_time = time.time()
                             
                             # 🐢 超安全频率控制策略
@@ -103,14 +124,28 @@ class EventListener:
                                 self.logger.info("🔍 低频检查：收到新块通知")
                                 self.last_scan_time = current_time
                                 self.scan_count_today += 1
-                                asyncio.create_task(self._ultra_safe_scan(1))
+                                
+                                # ✅ 新增：更新区块状态
+                                self.last_block_number = block_number
+                                self.processed_blocks.add(block_number)
+                                
+                                # ✅ 新增：清理旧的区块记录
+                                self._clean_old_blocks()
+                                
+                                asyncio.create_task(self._ultra_safe_scan(block_number))
                             
                             # 策略5：每60个块做一次深度检查（约3分钟）
                             elif self.consecutive_checks % 60 == 0:
                                 self.logger.info("📊 超低频深度检查")
                                 self.last_scan_time = current_time
                                 self.scan_count_today += 1
-                                asyncio.create_task(self._ultra_safe_scan(2))
+                                
+                                # ✅ 新增：更新区块状态
+                                self.last_block_number = block_number
+                                self.processed_blocks.add(block_number)
+                                self._clean_old_blocks()
+                                
+                                asyncio.create_task(self._ultra_safe_scan(block_number))
                             
                             else:
                                 self.logger.debug("⏭️ 跳过：超安全频率控制")
@@ -131,6 +166,15 @@ class EventListener:
             self.logger.error(f"WebSocket连接失败 {ws_url}: {e}")
             self.node_manager.mark_websocket_unhealthy(ws_url)
     
+    def _clean_old_blocks(self):
+        """✅ 新增：清理旧的区块记录，避免内存泄漏"""
+        if len(self.processed_blocks) > self.max_processed_blocks:
+            # 移除最旧的区块记录
+            blocks_to_remove = sorted(self.processed_blocks)[:self.max_processed_blocks // 2]
+            for block in blocks_to_remove:
+                self.processed_blocks.remove(block)
+            self.logger.debug(f"🧹 清理了 {len(blocks_to_remove)} 个旧的区块记录")
+    
     def _exceeded_daily_limit(self):
         """检查是否超过每日扫描限制"""
         current_time = time.time()
@@ -138,34 +182,25 @@ class EventListener:
         if current_time - self.last_reset_time > 86400:
             self.scan_count_today = 0
             self.last_reset_time = current_time
+            self.processed_blocks.clear()  # ✅ 新增：同时清空已处理区块
             self.logger.info("🔄 每日扫描计数器已重置")
         
         if self.scan_count_today >= self.daily_scan_limit:
             return True
         return False
     
-    async def _ultra_safe_scan(self, block_range=1):
-        """🐢 超安全扫描方法"""
+    async def _ultra_safe_scan(self, block_number):
+        """🐢 超安全扫描方法 - 修改为接收具体区块号"""
         # 前置检查
         if not await self._can_make_request():
             return
 
         try:
-            # 获取最新区块
-            latest_block = await self.node_manager.make_http_request('get_block', 'latest')
-            if not latest_block:
-                return
-                
-            block_number = latest_block.number
-            
-            # 超安全扫描：只扫描最新1个块
-            from_block = block_number
-            to_block = block_number
-            
-            self.logger.info(f"🐢 超安全扫描: 区块 {from_block} (今日扫描: {self.scan_count_today}/{self.daily_scan_limit})")
+            # ✅ 修改：直接使用传入的区块号，而不是重新获取最新区块
+            self.logger.info(f"🐢 超安全扫描: 区块 {block_number} (今日扫描: {self.scan_count_today}/{self.daily_scan_limit})")
             
             # 使用超安全扫描方法
-            await self._scan_blocks_ultra_safe(from_block, to_block)
+            await self._scan_blocks_ultra_safe(block_number, block_number)
                 
         except Exception as e:
             self.logger.error(f"超安全扫描失败: {e}")

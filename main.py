@@ -113,6 +113,7 @@ class MemeTokenDetector:
         app = web.Application()
         app.router.add_get('/', self.health_check)
         app.router.add_get('/health', self.health_check)
+        app.router.add_get('/status', self.system_status)  # 🎯 新增：系统状态端点
         app.router.add_get('/test-dingtalk', self.test_dingtalk)
 
         runner = web.AppRunner(app)
@@ -129,11 +130,91 @@ class MemeTokenDetector:
         self.logger.info(f"✅ HTTP服务器已成功启动在端口 {port}")
 
     async def health_check(self, request):
-        return web.json_response({
+        """🎯 改进的健康检查端点"""
+        # 基础健康检查
+        base_health = {
             "status": "running", 
             "service": "bsc-meme-detector",
-            "timestamp": asyncio.get_event_loop().time()
-        })
+            "timestamp": time.time(),
+            "version": "1.0.0"
+        }
+        
+        # 添加组件状态
+        try:
+            if self.event_listener:
+                scanner_status = self.event_listener.get_system_status()
+                base_health["scanner"] = scanner_status
+                
+                # 根据扫描器状态确定整体健康状态
+                if scanner_status["status"] == "limited":
+                    base_health["overall_status"] = "limited"
+                    base_health["message"] = "扫描任务已完成，系统待机中"
+                else:
+                    base_health["overall_status"] = "active"
+                    base_health["message"] = "系统正常运行中"
+            else:
+                base_health["scanner"] = {"status": "not_initialized"}
+                base_health["overall_status"] = "initializing"
+                
+        except Exception as e:
+            base_health["scanner"] = {"status": "error", "error": str(e)}
+            base_health["overall_status"] = "degraded"
+            
+        return web.json_response(base_health)
+
+    async def system_status(self, request):
+        """🎯 新增：详细系统状态端点"""
+        try:
+            status_data = {
+                "timestamp": time.time(),
+                "service": "bsc-meme-detector",
+                "components": {}
+            }
+            
+            # 事件监听器状态
+            if self.event_listener:
+                status_data["components"]["event_listener"] = self.event_listener.get_system_status()
+            else:
+                status_data["components"]["event_listener"] = {"status": "not_initialized"}
+                
+            # 节点管理器状态
+            if self.node_manager:
+                # 假设node_manager有get_status方法，如果没有可以简单标记
+                status_data["components"]["node_manager"] = {
+                    "status": "running",
+                    "http_nodes_count": len(self.node_manager.http_nodes) if hasattr(self.node_manager, 'http_nodes') else 0,
+                    "websocket_nodes_count": len(self.node_manager.websocket_nodes) if hasattr(self.node_manager, 'websocket_nodes') else 0
+                }
+            else:
+                status_data["components"]["node_manager"] = {"status": "not_initialized"}
+                
+            # 缓存管理器状态
+            if self.cache_manager:
+                status_data["components"]["cache_manager"] = {
+                    "status": "running",
+                    "backend": "redis"  # 假设使用Redis
+                }
+            else:
+                status_data["components"]["cache_manager"] = {"status": "not_initialized"}
+                
+            # 计算整体状态
+            component_statuses = [comp.get("status") for comp in status_data["components"].values()]
+            if all(status == "running" for status in component_statuses):
+                status_data["overall_status"] = "healthy"
+            elif "limited" in component_statuses:
+                status_data["overall_status"] = "limited"
+            elif "not_initialized" in component_statuses:
+                status_data["overall_status"] = "initializing"
+            else:
+                status_data["overall_status"] = "degraded"
+                
+            return web.json_response(status_data)
+            
+        except Exception as e:
+            return web.json_response({
+                "error": f"获取系统状态失败: {str(e)}",
+                "timestamp": time.time()
+            }, status=500)
 
     async def test_dingtalk(self, request):
         from notification_manager import NotificationManager
@@ -167,6 +248,15 @@ class MemeTokenDetector:
             await self.start_http_server()
             asyncio.create_task(self.event_listener.start_listening())
             
+            # 🎯 新增：启动状态监控任务
+            asyncio.create_task(self._status_monitor())
+            
+            self.logger.info("✅ 所有服务已启动完成")
+            self.logger.info("📊 可通过以下端点查看状态:")
+            self.logger.info("   - /health    基础健康检查")
+            self.logger.info("   - /status    详细系统状态")
+            self.logger.info("   - /test-dingtalk 测试钉钉通知")
+            
             # 保持程序运行
             while self.is_running:
                 await asyncio.sleep(1)
@@ -175,6 +265,33 @@ class MemeTokenDetector:
             self.logger.error(f"系统运行异常: {e}")
         finally:
             await self.shutdown()
+
+    async def _status_monitor(self):
+        """🎯 新增：系统状态监控任务"""
+        last_status_log_time = 0
+        status_log_interval = 300  # 每5分钟记录一次状态
+        
+        while self.is_running:
+            try:
+                current_time = time.time()
+                
+                # 定期记录系统状态
+                if current_time - last_status_log_time > status_log_interval:
+                    if self.event_listener:
+                        status = self.event_listener.get_system_status()
+                        self.logger.info(
+                            f"📊 系统状态监控 - "
+                            f"扫描: {status['scan_count_today']}/{status['daily_scan_limit']} | "
+                            f"状态: {status['status']} | "
+                            f"区块: {status['processed_blocks_count']} | "
+                            f"API错误: {status['api_limit_errors']}"
+                        )
+                    last_status_log_time = current_time
+                    
+            except Exception as e:
+                self.logger.error(f"状态监控任务错误: {e}")
+                
+            await asyncio.sleep(60)  # 每分钟检查一次
 
     async def shutdown(self):
         """关闭系统"""

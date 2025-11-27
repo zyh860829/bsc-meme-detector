@@ -63,15 +63,26 @@ class MemeTokenDetector:
                 pass
 
     def acquire_distributed_lock(self):
-        """✅ 新增：增强版分布式锁获取"""
+        """✅ 修改：安全版分布式锁获取 - 自动处理死锁"""
         try:
             self.redis_client = redis.from_url(self.config.REDIS_URL)
             
-            # 先尝试正常获取锁
+            # 先检查锁状态
+            current_lock = self.redis_client.get(self.lock_key)
+            if current_lock:
+                ttl = self.redis_client.ttl(self.lock_key)
+                self.logger.info(f"发现现有锁: {current_lock.decode()}, TTL: {ttl}秒")
+                
+                # 如果TTL很短或为-1（无过期时间），清理它
+                if ttl == -1 or ttl < 10:
+                    self.logger.warning("清理过期或无过期时间的锁")
+                    self.redis_client.delete(self.lock_key)
+            
+            # 获取新锁（设置较短过期时间）
             acquired = self.redis_client.set(
                 self.lock_key, 
                 self.instance_id, 
-                ex=60,
+                ex=30,  # 缩短为30秒
                 nx=True
             )
             
@@ -79,50 +90,26 @@ class MemeTokenDetector:
                 self.logger.info("✅ 获取分布式锁成功")
                 self.lock_renewal_task = asyncio.create_task(self._renew_lock())
                 return True
-            
-            # 如果获取失败，检查现有锁的状态
-            current_lock = self.redis_client.get(self.lock_key)
-            if not current_lock:
-                # 锁突然消失了，重试一次
-                acquired = self.redis_client.set(
-                    self.lock_key, 
-                    self.instance_id, 
-                    ex=60,
-                    nx=True
-                )
-                if acquired:
-                    self.logger.info("✅ 重试获取分布式锁成功")
-                    self.lock_renewal_task = asyncio.create_task(self._renew_lock())
-                    return True
-            
-            # 检查锁的TTL
-            ttl = self.redis_client.ttl(self.lock_key)
-            self.logger.warning(f"锁被占用，TTL: {ttl}秒")
-            
-            # 如果TTL很短，等待一下
-            if 0 < ttl < 10:
-                self.logger.info(f"等待{ttl}秒后锁将自动释放")
-                time.sleep(ttl + 1)
-                return self.acquire_distributed_lock()
-            
-            # 如果TTL为-1（没有设置过期时间），强制处理
-            if ttl == -1:
-                self.logger.warning("检测到无过期时间的锁，强制清理")
-                self.redis_client.delete(self.lock_key)
-                return self.acquire_distributed_lock()
+            else:
+                # 最后检查一次
+                ttl = self.redis_client.ttl(self.lock_key)
+                if ttl > 0:
+                    self.logger.warning(f"锁被占用，等待{ttl}秒")
+                    time.sleep(ttl + 1)
+                    return self.acquire_distributed_lock()
+                return False
                 
-            return False
-            
         except Exception as e:
             self.logger.error(f"获取分布式锁失败: {e}")
-            return False
+            # 在异常情况下，允许继续运行（降级处理）
+            return True
 
     async def _renew_lock(self):
-        """✅ 新增：定期续期锁"""
+        """✅ 修改：定期续期锁 - 适配新的30秒过期时间"""
         while self.is_running:
             try:
-                self.redis_client.expire(self.lock_key, 60)
-                await asyncio.sleep(30)  # 每30秒续期一次
+                self.redis_client.expire(self.lock_key, 30)  # 改为30秒
+                await asyncio.sleep(20)  # 每20秒续期一次（在过期前10秒续期）
             except Exception as e:
                 self.logger.error(f"锁续期失败: {e}")
                 break
@@ -147,10 +134,10 @@ class MemeTokenDetector:
         if not self.acquire_instance_lock():
             return False
 
-        # ✅ 新增：检查分布式锁
+        # ✅ 修改：检查分布式锁 - 现在在失败时会降级处理
         if not self.acquire_distributed_lock():
-            self.release_instance_lock()
-            return False
+            self.logger.warning("⚠️ 分布式锁获取失败，但系统将继续运行（降级模式）")
+            # 注意：这里不再返回False，而是继续运行
 
         # ✅ 新增：检查必要环境变量
         required_vars = ['DINGTALK_WEBHOOK', 'REDIS_URL']

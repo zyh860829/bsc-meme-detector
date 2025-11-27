@@ -20,12 +20,17 @@ class EventListener:
         self.daily_scan_limit = 500  # 每日最多500次扫描
         self.last_reset_time = time.time()
         
+        # 🎯 新增：智能限制状态管理
+        self.is_limit_reached = False
+        self.limit_notified = False
+        self.limit_reached_time = 0
+        
         # API限制管理
         self.api_limit_errors = 0
         self.last_api_limit_time = 0
         self.consecutive_checks = 0
         
-        # ✅ 新增：区块去重机制
+        # ✅ 区块去重机制
         self.processed_blocks = set()  # 已处理的区块号集合
         self.last_block_number = 0     # 最后处理的区块号
         self.max_processed_blocks = 1000  # 最大保存的区块数量
@@ -40,6 +45,11 @@ class EventListener:
         
         while self.is_running:
             try:
+                # 🎯 新增：达到限制时跳过节点获取
+                if self.is_limit_reached:
+                    await asyncio.sleep(60)  # 限制状态下等待更长时间
+                    continue
+                    
                 ws_url = await self.node_manager.get_current_websocket_url()
                 if not ws_url:
                     self.logger.warning("没有可用的WebSocket URL，等待30秒后重试...")
@@ -80,7 +90,7 @@ class EventListener:
                         data = json.loads(message)
                         
                         if 'params' in data and data['params'].get('subscription'):
-                            # ✅ 新增：提取区块号并进行去重检查
+                            # ✅ 提取区块号并进行去重检查
                             block_data = data['params']['result']
                             block_number_hex = block_data.get('number')
                             if not block_number_hex:
@@ -88,7 +98,7 @@ class EventListener:
                                 
                             block_number = int(block_number_hex, 16)
                             
-                            # ✅ 新增：区块去重检查
+                            # ✅ 区块去重检查
                             if block_number <= self.last_block_number:
                                 self.logger.debug(f"⏭️ 跳过旧区块: {block_number} (最后处理: {self.last_block_number})")
                                 continue
@@ -100,10 +110,18 @@ class EventListener:
                             self.consecutive_checks += 1
                             current_time = time.time()
                             
+                            # 🎯 修改：优先检查每日限制状态
+                            if self.is_limit_reached:
+                                # 限制状态下，只更新区块状态，不进行扫描
+                                self.last_block_number = block_number
+                                self.processed_blocks.add(block_number)
+                                self._clean_old_blocks()
+                                continue
+                            
                             # 🐢 超安全频率控制策略
                             # 策略1：每日扫描次数限制
                             if self._exceeded_daily_limit():
-                                self.logger.warning("📊 达到每日扫描限制，跳过检查")
+                                self._handle_daily_limit_reached()
                                 continue
                             
                             # 策略2：最小时间间隔限制（30秒）
@@ -125,11 +143,11 @@ class EventListener:
                                 self.last_scan_time = current_time
                                 self.scan_count_today += 1
                                 
-                                # ✅ 新增：更新区块状态
+                                # ✅ 更新区块状态
                                 self.last_block_number = block_number
                                 self.processed_blocks.add(block_number)
                                 
-                                # ✅ 新增：清理旧的区块记录
+                                # ✅ 清理旧的区块记录
                                 self._clean_old_blocks()
                                 
                                 asyncio.create_task(self._ultra_safe_scan(block_number))
@@ -140,7 +158,7 @@ class EventListener:
                                 self.last_scan_time = current_time
                                 self.scan_count_today += 1
                                 
-                                # ✅ 新增：更新区块状态
+                                # ✅ 更新区块状态
                                 self.last_block_number = block_number
                                 self.processed_blocks.add(block_number)
                                 self._clean_old_blocks()
@@ -167,7 +185,7 @@ class EventListener:
             self.node_manager.mark_websocket_unhealthy(ws_url)
     
     def _clean_old_blocks(self):
-        """✅ 新增：清理旧的区块记录，避免内存泄漏"""
+        """✅ 清理旧的区块记录，避免内存泄漏"""
         if len(self.processed_blocks) > self.max_processed_blocks:
             # 移除最旧的区块记录
             blocks_to_remove = sorted(self.processed_blocks)[:self.max_processed_blocks // 2]
@@ -182,15 +200,37 @@ class EventListener:
         if current_time - self.last_reset_time > 86400:
             self.scan_count_today = 0
             self.last_reset_time = current_time
-            self.processed_blocks.clear()  # ✅ 新增：同时清空已处理区块
+            self.processed_blocks.clear()  # ✅ 同时清空已处理区块
+            # 🎯 新增：重置限制状态
+            self.is_limit_reached = False
+            self.limit_notified = False
             self.logger.info("🔄 每日扫描计数器已重置")
         
         if self.scan_count_today >= self.daily_scan_limit:
             return True
         return False
     
+    def _handle_daily_limit_reached(self):
+        """🎯 新增：处理达到每日限制的情况"""
+        if not self.is_limit_reached:
+            self.is_limit_reached = True
+            self.limit_reached_time = time.time()
+            self.logger.info(f"🎯 今日扫描已达上限 {self.scan_count_today}/{self.daily_scan_limit}，进入待机模式")
+        
+        # 每10分钟提醒一次限制状态
+        current_time = time.time()
+        if not self.limit_notified or current_time - self.limit_reached_time > 600:
+            self.logger.info(f"⏸️ 系统待机中 - 今日扫描: {self.scan_count_today}/{self.daily_scan_limit}")
+            self.limit_notified = True
+            self.limit_reached_time = current_time
+    
     async def _ultra_safe_scan(self, block_number):
         """🐢 超安全扫描方法 - 修改为接收具体区块号"""
+        # 🎯 新增：前置限制检查
+        if self.is_limit_reached:
+            self.logger.debug("⏭️ 达到每日限制，跳过扫描")
+            return
+
         # 前置检查
         if not await self._can_make_request():
             return
@@ -207,6 +247,11 @@ class EventListener:
     
     async def _scan_blocks_ultra_safe(self, from_block, to_block):
         """🐢 超安全扫描 - 最保守的策略"""
+        # 🎯 新增：限制状态检查
+        if self.is_limit_reached:
+            self.logger.debug("⏭️ 达到每日限制，跳过区块扫描")
+            return 0
+            
         try:
             if from_block > to_block:
                 from_block, to_block = to_block, from_block
@@ -283,6 +328,11 @@ class EventListener:
     
     async def _get_factory_contract(self):
         """获取工厂合约实例"""
+        # 🎯 新增：限制状态检查
+        if self.is_limit_reached:
+            self.logger.debug("⏭️ 达到每日限制，跳过合约获取")
+            return None
+            
         try:
             if not self.node_manager.http_nodes:
                 self.logger.error("❌ 没有可用的HTTP节点")
@@ -311,6 +361,11 @@ class EventListener:
     
     async def _process_new_token(self, token_address, pair_address):
         """处理新代币检测"""
+        # 🎯 新增：限制状态检查
+        if self.is_limit_reached:
+            self.logger.debug(f"⏭️ 达到每日限制，跳过代币处理: {token_address}")
+            return
+            
         try:
             self.logger.info(f"🚨 处理新代币: {token_address}")
             await self._execute_detection_immediately(token_address, pair_address)
@@ -320,6 +375,11 @@ class EventListener:
     
     async def _execute_detection_immediately(self, token_address, pair_address):
         """立即执行代币检测 - 添加简单的流动性过滤"""
+        # 🎯 新增：限制状态检查
+        if self.is_limit_reached:
+            self.logger.debug(f"⏭️ 达到每日限制，跳过代币检测: {token_address}")
+            return
+            
         try:
             from risk_detector import RiskDetector
             from notification_manager import NotificationManager
@@ -348,8 +408,31 @@ class EventListener:
     
     async def _can_make_request(self):
         """检查是否可以进行API调用"""
-        # 简单的节流检查
+        # 🎯 新增：限制状态检查
+        if self.is_limit_reached:
+            return False
         return True
+    
+    def get_system_status(self):
+        """🎯 新增：获取系统状态信息"""
+        status = {
+            "is_running": self.is_running,
+            "scan_count_today": self.scan_count_today,
+            "daily_scan_limit": self.daily_scan_limit,
+            "is_limit_reached": self.is_limit_reached,
+            "last_reset_time": self.last_reset_time,
+            "processed_blocks_count": len(self.processed_blocks),
+            "api_limit_errors": self.api_limit_errors
+        }
+        
+        if self.is_limit_reached:
+            status["status"] = "limited"
+            status["message"] = f"今日扫描已达上限 ({self.scan_count_today}/{self.daily_scan_limit})"
+        else:
+            status["status"] = "active"
+            status["message"] = f"运行中 ({self.scan_count_today}/{self.daily_scan_limit})"
+            
+        return status
     
     async def stop(self):
         """停止监听"""

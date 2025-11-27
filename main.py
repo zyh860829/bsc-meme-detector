@@ -81,7 +81,7 @@ class MemeTokenDetector:
             return True  # 异常时也继续运行
 
     async def initialize(self):
-        """初始化系统"""
+        """🎯 修改：调整初始化顺序以正确传递event_listener引用"""
         self.logger.info("初始化Meme币检测系统...")
 
         # 检查单实例锁
@@ -99,10 +99,16 @@ class MemeTokenDetector:
             self.logger.error(f"❌ 缺少必要环境变量: {missing_vars}")
             return False
 
-        # 初始化组件
+        # 🎯 修改：调整初始化顺序
+        # 先创建基础组件
         self.node_manager = NodeManager(self.config)
         self.cache_manager = CacheManager(self.config)
+        
+        # 然后创建事件监听器
         self.event_listener = EventListener(self.config, self.node_manager, self.cache_manager)
+        
+        # 🎯 新增：将event_listener引用传递给其他组件
+        self.node_manager.event_listener = self.event_listener
         
         await self.node_manager.start()
         self.logger.info("✅ 系统初始化完成")
@@ -179,11 +185,13 @@ class MemeTokenDetector:
                 
             # 节点管理器状态
             if self.node_manager:
-                # 假设node_manager有get_status方法，如果没有可以简单标记
+                # 🎯 改进：添加更详细的节点信息
                 status_data["components"]["node_manager"] = {
                     "status": "running",
                     "http_nodes_count": len(self.node_manager.http_nodes) if hasattr(self.node_manager, 'http_nodes') else 0,
-                    "websocket_nodes_count": len(self.node_manager.websocket_nodes) if hasattr(self.node_manager, 'websocket_nodes') else 0
+                    "websocket_nodes_count": len(self.node_manager.ws_nodes) if hasattr(self.node_manager, 'ws_nodes') else 0,
+                    "healthy_http_nodes": len([n for n in self.node_manager.http_nodes if n.get('healthy', False)]) if hasattr(self.node_manager, 'http_nodes') else 0,
+                    "has_event_listener": self.node_manager.event_listener is not None
                 }
             else:
                 status_data["components"]["node_manager"] = {"status": "not_initialized"}
@@ -217,9 +225,11 @@ class MemeTokenDetector:
             }, status=500)
 
     async def test_dingtalk(self, request):
-        from notification_manager import NotificationManager
+        """🎯 修改：使用带有event_listener引用的NotificationManager"""
         try:
-            notifier = NotificationManager(self.config)
+            from notification_manager import NotificationManager
+            # 🎯 修改：传递event_listener引用
+            notifier = NotificationManager(self.config, self.event_listener)
             success = await notifier.send_test_notification()
             if success:
                 return web.Response(text="✅ 测试通知发送成功！请检查钉钉群")
@@ -256,6 +266,11 @@ class MemeTokenDetector:
             self.logger.info("   - /health    基础健康检查")
             self.logger.info("   - /status    详细系统状态")
             self.logger.info("   - /test-dingtalk 测试钉钉通知")
+            
+            # 🎯 新增：记录初始状态
+            if self.event_listener:
+                status = self.event_listener.get_system_status()
+                self.logger.info(f"📈 初始状态: 扫描 {status['scan_count_today']}/{status['daily_scan_limit']} | 状态: {status['status']}")
             
             # 保持程序运行
             while self.is_running:

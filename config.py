@@ -1,14 +1,11 @@
 import os
 from dotenv import load_dotenv
 
-
 load_dotenv()
-
 
 class Config:
     # 服务监听端口（Render 会自动设置 PORT 环境变量）
     PORT = os.getenv("PORT", "8080")
-
 
     # BSC节点配置 - 硬编码的节点列表，按响应速度排序
     BSC_NODES = [
@@ -50,7 +47,6 @@ class Config:
     BSC_WS_NODES = [
         os.getenv('QUICKNODE_WS_URL'),      # 重命名：QuickNode WebSocket节点
         os.getenv('INFURA_BSC_WS_URL')      # 新增：Infura WebSocket节点
-        # 注意：Moralis 没有 WS 节点，所以这里只有两个
     ]
     
     # API密钥
@@ -80,6 +76,20 @@ class Config:
     MAX_PREMINE_RATIO = 0.1
     MAX_PRESALE_RATIO = 0.2
     
+    # ✅ 新增：动态过滤配置
+    MIN_LP_AGE_MINUTES = 15  # LP池最小年龄（分钟）
+    MAX_CREATOR_HOLDINGS = 0.2  # 创建者最大持有LP比例
+    
+    # 过滤级别配置
+    FILTER_ESSENTIAL_MAX_TIME = 4  # 必要过滤最大耗时（秒）
+    FILTER_BALANCED_MAX_TIME = 6   # 平衡过滤最大耗时（秒）
+    FILTER_COMPREHENSIVE_MAX_TIME = 8  # 全面过滤最大耗时（秒）
+    
+    # 网络延迟阈值（秒）
+    NETWORK_EXCELLENT_THRESHOLD = 1.0   # 网络极好
+    NETWORK_GOOD_THRESHOLD = 3.0        # 网络良好
+    # 超过3秒为网络差
+    
     # PancakeSwap Factory地址
     PANCAKE_FACTORY = "0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73"
     PANCAKE_FACTORY_ABI = [
@@ -96,7 +106,6 @@ class Config:
         }
     ]
 
-    # ✅ 新增：环境变量验证方法
     def validate_required_vars(self):
         """验证必要环境变量"""
         required = {
@@ -108,16 +117,14 @@ class Config:
             raise ValueError(f"缺少必要环境变量: {missing}")
         return True
     
-    # ✅ 新增：获取有效的WebSocket节点
     def get_ws_nodes(self):
         """获取有效的WebSocket节点"""
         env_nodes = [node for node in self.BSC_WS_NODES if node]
-        # 如果没有环境变量节点，使用备用节点
         if not env_nodes:
             return [
                 "wss://bsc-ws-node.nariox.org",
                 "wss://bsc.publicnode.com", 
-                "wss://bsc-rpc.publicnode.com",  # 新增的节点
+                "wss://bsc-rpc.publicnode.com",
                 "wss://ws-bsc.nodeinfra.com"
             ]
         return env_nodes

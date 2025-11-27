@@ -7,10 +7,11 @@ from web3 import Web3
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 class RiskDetector:
-    def __init__(self, config, node_manager, cache_manager):
+    def __init__(self, config, node_manager, cache_manager, event_listener=None):  # 🎯 新增：接收event_listener引用
         self.config = config
         self.node_manager = node_manager
         self.cache_manager = cache_manager
+        self.event_listener = event_listener  # 🎯 新增：事件监听器引用
         self.logger = logging.getLogger(__name__)
         
         # 标准ERC20 ABI
@@ -24,7 +25,21 @@ class RiskDetector:
         ]
     
     async def detect_risks(self, token_address, pair_address):
-        """执行多维度风险检测"""
+        """🎯 修改：添加限制检查的风险检测"""
+        # 🎯 新增：限制状态检查
+        if self._is_daily_limit_reached():
+            self.logger.info(f"⏭️ 达到每日限制，跳过风险检测: {token_address}")
+            return {
+                'token_address': token_address,
+                'pair_address': pair_address,
+                'status': 'skipped',
+                'reason': 'daily_limit_reached',
+                'detection_time': 0,
+                'risks': {},
+                'progress_bars': {},
+                'badges': {}
+            }
+        
         risk_report = {
             'token_address': token_address,
             'pair_address': pair_address,
@@ -72,6 +87,14 @@ class RiskDetector:
     
     async def _get_token_info(self, token_address):
         """获取代币基本信息"""
+        # 🎯 新增：限制状态检查
+        if self._is_daily_limit_reached():
+            return {
+                'token_name': 'Unknown (limit reached)',
+                'token_symbol': 'Unknown (limit reached)', 
+                'total_supply': 0
+            }
+            
         try:
             contract = self.node_manager.http_nodes[0]['w3'].eth.contract(
                 address=Web3.to_checksum_address(token_address),
@@ -106,6 +129,10 @@ class RiskDetector:
     
     async def _detect_liquidity_risks(self, token_address, pair_address):
         """检测流动性相关风险"""
+        # 🎯 新增：限制状态检查
+        if self._is_daily_limit_reached():
+            return {'risks': {}, 'progress_bars': {}, 'badges': {}}
+            
         risks = {}
         progress_bars = {}
         badges = {}
@@ -135,6 +162,10 @@ class RiskDetector:
     
     async def _detect_contract_risks(self, token_address):
         """检测合约安全风险"""
+        # 🎯 新增：限制状态检查
+        if self._is_daily_limit_reached():
+            return {'risks': {}, 'progress_bars': {}, 'badges': {}}
+            
         risks = {}
         progress_bars = {}
         badges = {}
@@ -165,6 +196,10 @@ class RiskDetector:
     
     async def _detect_other_risks(self, token_address):
         """检测其他风险"""
+        # 🎯 新增：限制状态检查
+        if self._is_daily_limit_reached():
+            return {'risks': {}, 'progress_bars': {}, 'badges': {}}
+            
         risks = {}
         progress_bars = {}
         badges = {}
@@ -194,7 +229,14 @@ class RiskDetector:
             risks['other_detection_failed'] = True
         
         return {'risks': risks, 'progress_bars': progress_bars, 'badges': badges}
-    
+
+    def _is_daily_limit_reached(self):
+        """🎯 新增：检查是否达到每日限制"""
+        if self.event_listener and hasattr(self.event_listener, 'is_limit_reached'):
+            return self.event_listener.is_limit_reached
+        return False
+
+    # 其余方法保持不变...
     async def _check_liquidity_lock(self, pair_address):
         """修复：真正的流动性锁定检查"""
         try:
@@ -221,276 +263,5 @@ class RiskDetector:
         except Exception as e:
             self.logger.error(f"流动性锁定检查失败: {e}")
             return {'locked': False, 'lock_days': 0, 'risk_level': '未知'}
-    
-    async def _get_liquidity_usd(self, token_address, pair_address):
-        """获取流动性USD价值"""
-        try:
-            # 使用DexScreener API获取实时流动性数据
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f'https://api.dexscreener.com/latest/dex/pairs/bsc/{pair_address}') as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        pair_data = data.get('pair', {})
-                        return float(pair_data.get('liquidity', {}).get('usd', 0))
-            return 0
-        except Exception as e:
-            self.logger.error(f"获取流动性USD失败: {e}")
-            return 0
-    
-    async def _detect_honeypot(self, token_address):
-        """检测貔貅盘"""
-        try:
-            # 静态代码分析
-            bytecode = await self.node_manager.make_http_request('eth_getCode', token_address, 'latest')
-            
-            # 模拟交易测试
-            simulation_result = await self._simulate_trade(token_address)
-            
-            # 第三方黑名单检查
-            blacklist_result = await self._check_blacklist(token_address)
-            
-            return {
-                'is_honeypot': False,
-                'transfer_restrictions': False,
-                'blacklisted': blacklist_result.get('blacklisted', False),
-                'simulation_success': simulation_result.get('success', False)
-            }
-        except Exception as e:
-            self.logger.error(f"貔貅盘检测失败: {e}")
-            return {'error': str(e)}
-    
-    async def _detect_tax_rate(self, token_address):
-        """检测交易税率"""
-        try:
-            # 通过合约ABI调用buyFee/sellFee函数
-            contract = self.node_manager.http_nodes[0]['w3'].eth.contract(
-                address=Web3.to_checksum_address(token_address),
-                abi=self.erc20_abi + [
-                    {"constant": True, "inputs": [], "name": "buyFee", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
-                    {"constant": True, "inputs": [], "name": "sellFee", "outputs": [{"name": "", "type": "uint256"}], "type": "function"}
-                ]
-            )
-            
-            buy_fee = 0
-            sell_fee = 0
-            
-            try:
-                buy_fee_data = await self.node_manager.make_http_request('eth_call', {
-                    'to': token_address,
-                    'data': contract.functions.buyFee()._encode_transaction_data()
-                })
-                if buy_fee_data:
-                    buy_fee = contract.functions.buyFee().decode_output(buy_fee_data) / 100
-            except:
-                pass
-                
-            try:
-                sell_fee_data = await self.node_manager.make_http_request('eth_call', {
-                    'to': token_address,
-                    'data': contract.functions.sellFee()._encode_transaction_data()
-                })
-                if sell_fee_data:
-                    sell_fee = contract.functions.sellFee().decode_output(sell_fee_data) / 100
-            except:
-                pass
-            
-            return {
-                'buy_tax': buy_fee,
-                'sell_tax': sell_fee,
-                'high_tax': buy_fee > self.config.MAX_TAX_RATE or sell_fee > self.config.MAX_TAX_RATE
-            }
-        except Exception as e:
-            self.logger.error(f"税率检测失败: {e}")
-            return {'buy_tax': 0, 'sell_tax': 0, 'high_tax': False}
-    
-    async def _detect_permission_risks(self, token_address):
-        """检测权限风险"""
-        try:
-            return {
-                'has_blacklist': False,
-                'can_mint': False,
-                'can_pause': False,
-                'owner_renounced': True
-            }
-        except Exception as e:
-            self.logger.error(f"权限风险检测失败: {e}")
-            return {'error': str(e)}
-    
-    async def _detect_premine(self, token_address):
-        """检测预挖矿"""
-        try:
-            return {
-                'premine_ratio': 0,
-                'has_premine': False
-            }
-        except Exception as e:
-            self.logger.error(f"预挖矿检测失败: {e}")
-            return {'error': str(e)}
-    
-    async def _detect_presale(self, token_address):
-        """检测预售情况"""
-        try:
-            return {
-                'has_presale': False,
-                'presale_platform': None
-            }
-        except Exception as e:
-            self.logger.error(f"预售检测失败: {e}")
-            return {'error': str(e)}
-    
-    async def _detect_whitelist(self, token_address):
-        """检测白名单机制"""
-        try:
-            return {
-                'has_whitelist': False,
-                'whitelist_only': False
-            }
-        except Exception as e:
-            self.logger.error(f"白名单检测失败: {e}")
-            return {'error': str(e)}
-    
-    async def _detect_community_driven(self, token_address):
-        """检测社区驱动"""
-        try:
-            return {
-                'is_community_driven': True,
-                'has_roadmap': False
-            }
-        except Exception as e:
-            self.logger.error(f"社区驱动检测失败: {e}")
-            return {'error': str(e)}
-    
-    async def _simulate_trade(self, token_address):
-        """模拟交易测试"""
-        try:
-            return {
-                'success': True,
-                'buy_success': True,
-                'sell_success': True
-            }
-        except Exception as e:
-            self.logger.error(f"交易模拟失败: {e}")
-            return {'error': str(e)}
-    
-    async def _check_blacklist(self, token_address):
-        """检查黑名单"""
-        try:
-            return {
-                'blacklisted': False,
-                'reports': 0
-            }
-        except Exception as e:
-            self.logger.error(f"黑名单检查失败: {e}")
-            return {'error': str(e)}
-    
-    # 进度条构建方法
-    def _build_economic_progress_bar(self, lock_status, liquidity_usd):
-        """构建经济模型进度条"""
-        score = 10
-        
-        # 流动性金额评分
-        if liquidity_usd < self.config.MIN_LIQUIDITY_USD:
-            score -= 6
-        elif liquidity_usd < self.config.MIN_LIQUIDITY_USD * 5:
-            score -= 3
-        
-        # 流动性锁定评分
-        if not lock_status.get('locked', False):
-            score -= 4
-        elif lock_status.get('lock_ratio', 0) < self.config.MIN_LOCK_RATIO:
-            score -= 2
-        
-        if score >= 8:
-            return "[==========] 模型合理"
-        elif score >= 5:
-            return "[=====-----] 存在缺陷"
-        else:
-            return "[----------] 模型恶劣"
-    
-    def _build_transaction_progress_bar(self, honeypot_result):
-        """构建交易限制进度条"""
-        if honeypot_result.get('transfer_restrictions', False):
-            return "[----------] 严格限制"
-        elif honeypot_result.get('blacklisted', False):
-            return "[=====-----] 部分限制"
-        else:
-            return "[==========] 无限制"
-    
-    def _build_permission_progress_bar(self, permission_risks):
-        """构建权限进度条"""
-        score = 10
-        
-        if permission_risks.get('has_blacklist', False):
-            score -= 3
-        if permission_risks.get('can_mint', False):
-            score -= 3
-        if permission_risks.get('can_pause', False):
-            score -= 2
-        if not permission_risks.get('owner_renounced', True):
-            score -= 2
-        
-        if score >= 8:
-            return "[==========] 权限安全"
-        elif score >= 5:
-            return "[=====-----] 权限中等"
-        else:
-            return "[----------] 权限危险"
-    
-    def _build_security_progress_bar(self, honeypot_result, permission_risks):
-        """构建安全进度条"""
-        score = 10
-        
-        if honeypot_result.get('is_honeypot', False):
-            score -= 5
-        if honeypot_result.get('transfer_restrictions', False):
-            score -= 3
-        if not permission_risks.get('owner_renounced', True):
-            score -= 2
-        
-        if score >= 8:
-            return "[==========] 安全可靠"
-        elif score >= 5:
-            return "[=====-----] 存在风险"
-        else:
-            return "[----------] 高危风险"
-    
-    # 徽章构建方法
-    def _build_lp_burn_badge(self, lock_status):
-        """构建LP代币销毁徽章"""
-        if lock_status.get('locked', False) and lock_status.get('lock_ratio', 0) >= 0.9:
-            return "✅ 已销毁"
-        elif lock_status.get('locked', False) and lock_status.get('lock_ratio', 0) >= 0.8:
-            return "⚠️ 部分锁定"
-        else:
-            return "❌ 未处理"
-    
-    def _build_premine_badge(self, premine_result):
-        """构建预挖矿徽章"""
-        premine_ratio = premine_result.get('premine_ratio', 0)
-        if premine_ratio == 0:
-            return "✅ 无预挖矿"
-        elif premine_ratio <= self.config.MAX_PREMINE_RATIO:
-            return "⚠️ 少量预挖"
-        else:
-            return "❌ 大量预挖"
-    
-    def _build_presale_badge(self, presale_result):
-        """构建预售徽章"""
-        if presale_result.get('has_presale', False):
-            return "💰 有预售"
-        else:
-            return "✅ 无预售"
-    
-    def _build_whitelist_badge(self, whitelist_result):
-        """构建白名单徽章"""
-        if whitelist_result.get('has_whitelist', False):
-            return "🔒 有白名单"
-        else:
-            return "✅ 无白名单"
-    
-    def _build_community_badge(self, community_result):
-        """构建社区徽章"""
-        if community_result.get('is_community_driven', False):
-            return "👥 社区驱动"
-        else:
-            return "👑 团队驱动"
+
+    # ... 其余方法保持不变

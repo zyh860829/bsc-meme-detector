@@ -384,7 +384,9 @@ class EventListener:
             from risk_detector import RiskDetector
             from notification_manager import NotificationManager
             
-            detector = RiskDetector(self.config, self.node_manager, self.cache_manager)
+            # 🎯 修改：传递event_listener引用
+            detector = RiskDetector(self.config, self.node_manager, self.cache_manager, self)
+            notifier = NotificationManager(self.config, self)
             
             start_time = asyncio.get_event_loop().time()
             
@@ -400,7 +402,6 @@ class EventListener:
                 return
             
             # 发送通知
-            notifier = NotificationManager(self.config)
             await notifier.send_dingtalk_notification(risk_report, detection_time)
             
         except Exception as e:

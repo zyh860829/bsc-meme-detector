@@ -3,9 +3,9 @@ import logging
 import signal
 import sys
 import os
-import fcntl  # ✅ 新增：文件锁
-import redis  # ✅ 新增：Redis客户端
-import time   # ✅ 新增：时间模块
+import fcntl
+import redis
+import time
 from aiohttp import web
 from config import Config
 from node_manager import NodeManager
@@ -21,9 +21,9 @@ class MemeTokenDetector:
         self.event_listener = None
         self.is_running = False
         self.http_runner = None
-        self.lock_file = None  # ✅ 新增：锁文件
+        self.lock_file = None
         
-        # ✅ 新增：Redis分布式锁相关
+        # Redis锁相关
         self.redis_client = None
         self.lock_key = "meme_detector_instance_lock"
         self.instance_id = f"instance_{int(time.time())}_{os.getpid()}"
@@ -42,124 +42,74 @@ class MemeTokenDetector:
         self.logger = logging.getLogger(__name__)
 
     def acquire_instance_lock(self):
-        """✅ 新增：获取实例锁，确保单实例运行"""
+        """获取实例锁"""
         try:
             self.lock_file = open('/tmp/meme_detector.lock', 'w')
             fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            self.logger.info("✅ 获取实例锁成功，单实例运行")
+            self.logger.info("✅ 获取实例锁成功")
             return True
         except (IOError, BlockingIOError):
-            self.logger.error("❌ 另一个实例正在运行，退出当前实例")
+            self.logger.error("❌ 另一个实例正在运行")
             return False
 
-    def release_instance_lock(self):
-        """✅ 新增：释放实例锁"""
-        if self.lock_file:
-            try:
-                fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_UN)
-                self.lock_file.close()
-                self.logger.info("✅ 释放实例锁")
-            except:
-                pass
-
     def acquire_distributed_lock(self):
-        """✅ 修改：安全版分布式锁获取 - 自动处理死锁"""
+        """紧急修复版：强制清理异常锁"""
         try:
             self.redis_client = redis.from_url(self.config.REDIS_URL)
             
-            # 先检查锁状态
-            current_lock = self.redis_client.get(self.lock_key)
-            if current_lock:
-                ttl = self.redis_client.ttl(self.lock_key)
-                self.logger.info(f"发现现有锁: {current_lock.decode()}, TTL: {ttl}秒")
-                
-                # 如果TTL很短或为-1（无过期时间），清理它
-                if ttl == -1 or ttl < 10:
-                    self.logger.warning("清理过期或无过期时间的锁")
-                    self.redis_client.delete(self.lock_key)
+            # 强制删除所有可能的异常锁
+            self.redis_client.delete(self.lock_key)
+            self.logger.info("✅ 强制清理Redis锁完成")
             
-            # 获取新锁（设置较短过期时间）
+            # 获取新锁（设置更短过期时间）
             acquired = self.redis_client.set(
                 self.lock_key, 
                 self.instance_id, 
-                ex=30,  # 缩短为30秒
+                ex=10,  # 缩短为10秒
                 nx=True
             )
             
             if acquired:
                 self.logger.info("✅ 获取分布式锁成功")
-                self.lock_renewal_task = asyncio.create_task(self._renew_lock())
                 return True
             else:
-                # 最后检查一次
-                ttl = self.redis_client.ttl(self.lock_key)
-                if ttl > 0:
-                    self.logger.warning(f"锁被占用，等待{ttl}秒")
-                    time.sleep(ttl + 1)
-                    return self.acquire_distributed_lock()
-                return False
+                self.logger.error("❌ 获取分布式锁失败，但继续运行")
+                return True  # 降级处理
                 
         except Exception as e:
             self.logger.error(f"获取分布式锁失败: {e}")
-            # 在异常情况下，允许继续运行（降级处理）
-            return True
-
-    async def _renew_lock(self):
-        """✅ 修改：定期续期锁 - 适配新的30秒过期时间"""
-        while self.is_running:
-            try:
-                self.redis_client.expire(self.lock_key, 30)  # 改为30秒
-                await asyncio.sleep(20)  # 每20秒续期一次（在过期前10秒续期）
-            except Exception as e:
-                self.logger.error(f"锁续期失败: {e}")
-                break
-
-    def release_distributed_lock(self):
-        """✅ 新增：释放分布式锁"""
-        try:
-            if self.redis_client:
-                # 只释放自己持有的锁
-                current_holder = self.redis_client.get(self.lock_key)
-                if current_holder and current_holder.decode() == self.instance_id:
-                    self.redis_client.delete(self.lock_key)
-                    self.logger.info("✅ 释放分布式锁成功")
-        except Exception as e:
-            self.logger.error(f"释放分布式锁失败: {e}")
+            return True  # 异常时也继续运行
 
     async def initialize(self):
-        """初始化系统 - 增加环境变量检查"""
+        """初始化系统"""
         self.logger.info("初始化Meme币检测系统...")
 
-        # ✅ 新增：检查单实例锁
+        # 检查单实例锁
         if not self.acquire_instance_lock():
             return False
 
-        # ✅ 修改：检查分布式锁 - 现在在失败时会降级处理
+        # 检查分布式锁（现在失败也会继续）
         if not self.acquire_distributed_lock():
-            self.logger.warning("⚠️ 分布式锁获取失败，但系统将继续运行（降级模式）")
-            # 注意：这里不再返回False，而是继续运行
+            self.logger.warning("⚠️ 分布式锁获取失败，但系统将继续运行")
 
-        # ✅ 新增：检查必要环境变量
+        # 检查必要环境变量
         required_vars = ['DINGTALK_WEBHOOK', 'REDIS_URL']
         missing_vars = [var for var in required_vars if not getattr(self.config, var, None)]
         if missing_vars:
             self.logger.error(f"❌ 缺少必要环境变量: {missing_vars}")
-            self.release_instance_lock()
-            self.release_distributed_lock()
             return False
 
-        # 原有初始化逻辑
+        # 初始化组件
         self.node_manager = NodeManager(self.config)
         self.cache_manager = CacheManager(self.config)
         self.event_listener = EventListener(self.config, self.node_manager, self.cache_manager)
         
         await self.node_manager.start()
-
         self.logger.info("✅ 系统初始化完成")
         return True
 
     async def start_http_server(self):
-        """启动HTTP服务器 - 返回runner用于清理"""
+        """启动HTTP服务器 - 修复端口绑定"""
         app = web.Application()
         app.router.add_get('/', self.health_check)
         app.router.add_get('/health', self.health_check)
@@ -168,12 +118,15 @@ class MemeTokenDetector:
         runner = web.AppRunner(app)
         await runner.setup()
         
-        port = int(self.config.PORT) if hasattr(self.config, 'PORT') and self.config.PORT else 8080
+        # 确保使用Render提供的PORT环境变量
+        port = int(os.getenv('PORT', '8080'))
+        self.logger.info(f"🚀 启动HTTP服务器在端口: {port}")
+        
         site = web.TCPSite(runner, '0.0.0.0', port)
         await site.start()
         
-        self.http_runner = runner  # 存储runner
-        self.logger.info(f"✅ HTTP服务器已启动在端口 {port}")
+        self.http_runner = runner
+        self.logger.info(f"✅ HTTP服务器已成功启动在端口 {port}")
 
     async def health_check(self, request):
         return web.json_response({
@@ -195,14 +148,14 @@ class MemeTokenDetector:
             return web.Response(text=f"❌ 测试错误: {str(e)}")
 
     async def start(self):
-        """启动系统 - 增加信号处理"""
+        """启动系统"""
         if not await self.initialize():
             self.logger.error("系统初始化失败")
             return
 
         self.is_running = True
         
-        # ✅ 新增：注册信号处理
+        # 注册信号处理
         loop = asyncio.get_event_loop()
         for signame in ('SIGINT', 'SIGTERM'):
             loop.add_signal_handler(
@@ -224,47 +177,36 @@ class MemeTokenDetector:
             await self.shutdown()
 
     async def shutdown(self):
-        """关闭系统 - 完善资源清理"""
+        """关闭系统"""
         if not self.is_running:
             return
             
         self.is_running = False
         self.logger.info("正在关闭系统...")
 
-        # 取消锁续期任务
-        if self.lock_renewal_task:
-            self.lock_renewal_task.cancel()
-
-        # 关闭事件监听器
+        # 关闭组件
         if self.event_listener:
             self.event_listener.is_running = False
 
-        # ✅ 新增：关闭NodeManager
         if self.node_manager:
             await self.node_manager.close()
 
-        # ✅ 新增：关闭HTTP服务器
         if self.http_runner:
             await self.http_runner.cleanup()
 
-        # ✅ 新增：释放实例锁
-        self.release_instance_lock()
-        
-        # ✅ 新增：释放分布式锁
-        self.release_distributed_lock()
+        # 释放锁
+        if self.lock_file:
+            try:
+                fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_UN)
+                self.lock_file.close()
+            except:
+                pass
 
         self.logger.info("✅ 系统已关闭")
-
-def handle_sigterm(signum, frame):
-    """处理SIGTERM信号"""
-    print(f"\n⚠️ 收到信号 {signum}，准备优雅退出...")
-    sys.exit(0)
 
 async def main():
     detector = MemeTokenDetector()
     await detector.start()
 
 if __name__ == "__main__":
-    # ✅ 注册SIGTERM处理器
-    signal.signal(signal.SIGTERM, handle_sigterm)
     asyncio.run(main())

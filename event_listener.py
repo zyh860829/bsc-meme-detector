@@ -136,8 +136,8 @@ class EventListener:
                                 self.logger.debug(f"❄️ API限制冷却中，还需等待{remaining:.1f}秒")
                                 continue
                             
-                            # 策略4：保持原有检查频率
-                            # 每10个块检查一次（约30秒）- 保持不变
+                            # 策略4：大幅降低检查频率
+                            # 每10个块检查一次（约30秒）
                             if self.consecutive_checks % 10 == 0:
                                 self.logger.info("🔍 低频检查：收到新块通知")
                                 self.last_scan_time = current_time
@@ -152,8 +152,7 @@ class EventListener:
                                 
                                 asyncio.create_task(self._ultra_safe_scan(block_number))
                             
-                            # 策略5：保持原有深度检查频率
-                            # 每60个块做一次深度检查（约3分钟）- 保持不变
+                            # 策略5：每60个块做一次深度检查（约3分钟）
                             elif self.consecutive_checks % 60 == 0:
                                 self.logger.info("📊 超低频深度检查")
                                 self.last_scan_time = current_time
@@ -247,7 +246,7 @@ class EventListener:
             self.logger.error(f"超安全扫描失败: {e}")
     
     async def _scan_blocks_ultra_safe(self, from_block, to_block):
-        """🐢 超安全扫描 - 保持原有最保守的策略"""
+        """🐢 超安全扫描 - 最保守的策略"""
         # 🎯 新增：限制状态检查
         if self.is_limit_reached:
             self.logger.debug("⏭️ 达到每日限制，跳过区块扫描")
@@ -257,13 +256,13 @@ class EventListener:
             if from_block > to_block:
                 from_block, to_block = to_block, from_block
             
-            # 🎯 修改：保持原有区块范围限制（1个区块）
-            max_block_range = 1  # 保持不变
+            # 超安全扫描：严格限制范围
+            max_block_range = 1
             if to_block - from_block > max_block_range:
                 to_block = from_block + max_block_range
                 self.logger.warning(f"⚠️ 扫描范围过大，调整为: {from_block}-{to_block}")
             
-            # 🎯 修改：获取多个工厂合约实例
+            # 获取合约实例
             factory_contracts = await self._get_factory_contracts()
             if not factory_contracts:
                 self.logger.error("无法获取工厂合约实例")
@@ -272,7 +271,7 @@ class EventListener:
             loop = asyncio.get_event_loop()
             
             new_pairs_found = 0
-            # 🎯 修改：遍历所有工厂合约
+            # 遍历所有工厂合约
             for factory in factory_contracts:
                 try:
                     events = await loop.run_in_executor(
@@ -291,7 +290,7 @@ class EventListener:
                         if self.cache_manager.exists('detected_pairs', cache_key):
                             continue
                         
-                        self.logger.info(f"🎯 从 {factory['name']} 发现新交易对: {token_address} -> {pair_address}")
+                        self.logger.info(f"🎯 发现新交易对: {token_address} -> {pair_address}")
                         
                         self.cache_manager.set('detected_pairs', cache_key, True, 3600)
                         await self._process_new_token(token_address, pair_address)
@@ -302,12 +301,12 @@ class EventListener:
                     continue
             
             # 重置API限制错误计数（成功扫描后）
-            if self.api_limit_errors > 0 and new_pairs_found > 0:
+            if self.api_limit_errors > 0:
                 self.logger.info("✅ API限制错误计数重置")
                 self.api_limit_errors = 0
             
             if new_pairs_found > 0:
-                self.logger.info(f"✅ 多工厂扫描完成: 发现 {new_pairs_found} 个新交易对")
+                self.logger.info(f"✅ 超安全扫描完成: 发现 {new_pairs_found} 个新交易对")
             else:
                 self.logger.debug(f"超安全扫描完成: 区块 {from_block} 无新交易对")
                 
@@ -336,7 +335,7 @@ class EventListener:
             return 0
     
     async def _get_factory_contracts(self):
-        """🎯 修改：获取多个工厂合约实例"""
+        """获取工厂合约实例"""
         # 🎯 新增：限制状态检查
         if self.is_limit_reached:
             self.logger.debug("⏭️ 达到每日限制，跳过合约获取")
@@ -358,7 +357,7 @@ class EventListener:
             node = healthy_nodes[0]
             w3_instance = node['w3']
             
-            # 🎯 修改：监听2个主要工厂合约（PancakeSwap V1和V2）
+            # 🎯 唯一修改的地方：添加PancakeSwap V1工厂
             factory_configs = [
                 {
                     'name': 'PancakeSwap V2',
@@ -383,11 +382,9 @@ class EventListener:
                         'name': config['name'],
                         'contract': contract
                     })
-                    self.logger.info(f"✅ 成功初始化工厂合约: {config['name']}")
                 except Exception as e:
                     self.logger.warning(f"初始化工厂合约失败 {config['name']}: {e}")
             
-            self.logger.info(f"✅ 成功初始化 {len(factories)} 个工厂合约")
             return factories
             
         except Exception as e:

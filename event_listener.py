@@ -357,7 +357,7 @@ class EventListener:
             node = healthy_nodes[0]
             w3_instance = node['w3']
             
-            # 🎯 唯一修改的地方：扩展到6个DEX工厂
+            # 🎯 唯一修改的地方：减少到4个核心工厂避免429错误
             factory_configs = [
                 {
                     'name': 'PancakeSwap V2',
@@ -378,17 +378,8 @@ class EventListener:
                     'name': 'BiSwap',
                     'address': Web3.to_checksum_address('0x858E3312ed3A876947EA49d572A7C42DE08af7EE'),
                     'abi': self.config.PANCAKE_FACTORY_ABI
-                },
-                {
-                    'name': 'Four.meme',
-                    'address': Web3.to_checksum_address('0x7Bc382DdC5928964D7af60e7e2a18771C6D2F4dE'),
-                    'abi': self.config.PANCAKE_FACTORY_ABI
-                },
-                {
-                    'name': 'Uniswap V2',
-                    'address': Web3.to_checksum_address('0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6'),
-                    'abi': self.config.PANCAKE_FACTORY_ABI
                 }
+                # 暂时移除 Four.meme 和 Uniswap V2，等节点优化后再添加
             ]
             
             factories = []
